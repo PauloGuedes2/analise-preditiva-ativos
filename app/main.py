@@ -6,7 +6,7 @@ import pandas as pd
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import classification_report, mean_absolute_error, r2_score, accuracy_score
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings('ignore')
@@ -144,7 +144,7 @@ class StockPredictor:
         grid_clf = GridSearchCV(
             RandomForestClassifier(random_state=42),
             param_grid_clf,
-            cv=3,
+            cv=TimeSeriesSplit(n_splits=3),
             scoring='accuracy'
         )
         grid_clf.fit(X_train, y_class)
@@ -385,6 +385,12 @@ def main():
 
         print(f"📊 Split temporal - Treino: {len(X_train)}, Teste: {len(X_test)}")
 
+        train_dates = f"{X_train.index.min().strftime('%Y-%m-%d')} a {X_train.index.max().strftime('%Y-%m-%d')}"
+        test_dates = f"{X_test.index.min().strftime('%Y-%m-%d')} a {X_test.index.max().strftime('%Y-%m-%d')}"
+
+        print(f"📅 Período de Treino: {train_dates}")
+        print(f"📈 Período de Teste: {test_dates}")
+
         # 6. Treinar modelos
         predictor.train_models(X_train, X_train_scaled, y_class_train, y_price_train)
 
@@ -447,6 +453,9 @@ def main():
 
         # Análise de risco
         print("\n⚠️  ANÁLISE DE RISCO:")
+        current_volatility = returns_test.std()
+        if current_volatility > 0.02:
+            print(f"⚠️  Volatilidade atual: {current_volatility:.2%} - Mercado agitado")
         if prediction['expected_return'] > 0.01:
             print("✅ Retorno esperado positivo - Potencial de ganho")
         else:
