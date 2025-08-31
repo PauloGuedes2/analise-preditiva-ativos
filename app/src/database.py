@@ -21,14 +21,15 @@ class DatabaseManager:
 
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS stock_prices (
-            date TEXT PRIMARY KEY,
+            date TEXT,
             ticker TEXT,
             open REAL,
             high REAL,
             low REAL,
             close REAL,
             volume INTEGER,
-            created_at TEXT
+            created_at TEXT,
+            PRIMARY KEY (date, ticker)
         )
         ''')
 
@@ -47,45 +48,71 @@ class DatabaseManager:
         conn.close()
 
     def save_stock_data(self, df, ticker):
-        """Salva dados da ação no banco"""
+        """Salva dados da ação no banco - versão simplificada"""
+        if df.empty:
+            print("DataFrame vazio. Nada para salvar.")
+            return
+
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Preparar dados para inserção
         created_at = datetime.now().isoformat()
 
+        # Converter o DataFrame para uma lista de tuplas de forma segura
+        records = []
         for index, row in df.iterrows():
             try:
-                cursor.execute('''
-                INSERT OR REPLACE INTO stock_prices 
-                (date, ticker, open, high, low, close, volume, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    index.strftime('%Y-%m-%d'),
+                # Se o DataFrame tem MultiIndex, index será uma tupla
+                if isinstance(index, tuple):
+                    date_str = index[0].strftime('%Y-%m-%d') if hasattr(index[0], 'strftime') else str(index[0])
+                else:
+                    date_str = index.strftime('%Y-%m-%d') if hasattr(index, 'strftime') else str(index)
+
+                records.append((
+                    date_str,
                     ticker,
-                    row['Open'],
-                    row['High'],
-                    row['Low'],
-                    row['Close'],
-                    row['Volume'],
+                    float(row['Open']),
+                    float(row['High']),
+                    float(row['Low']),
+                    float(row['Close']),
+                    int(row['Volume']),
                     created_at
                 ))
             except Exception as e:
-                print(f"Erro ao inserir dados para {index}: {e}")
+                print(f"Erro ao processar linha {index}: {e}")
+                continue
 
-        conn.commit()
+        # Inserir dados
+        try:
+            if records:
+                cursor.executemany('''
+                INSERT OR REPLACE INTO stock_prices 
+                (date, ticker, open, high, low, close, volume, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', records)
+
+                print(f"Salvos {len(records)} registros para {ticker} no banco de dados")
+                conn.commit()
+            else:
+                print("Nenhum registro válido para salvar")
+
+        except Exception as e:
+            print(f"Erro ao salvar dados: {e}")
+            conn.rollback()
+
         conn.close()
 
     def load_stock_data(self, ticker):
         """Carrega dados da ação do banco"""
         conn = self._get_connection()
-        query = f"SELECT date, open, high, low, close, volume FROM stock_prices WHERE ticker = '{ticker}' ORDER BY date"
 
         try:
-            df = pd.read_sql_query(query, conn, parse_dates=['date'])
+            query = "SELECT date, open, high, low, close, volume FROM stock_prices WHERE ticker = ? ORDER BY date"
+            df = pd.read_sql_query(query, conn, params=[ticker], parse_dates=['date'])
+
             if not df.empty:
                 df.set_index('date', inplace=True)
-                # Renomear colunas para formato padrão
+                # Renomear colunas para formato padrão do pandas
                 df.rename(columns={
                     'open': 'Open',
                     'high': 'High',
@@ -93,9 +120,61 @@ class DatabaseManager:
                     'close': 'Close',
                     'volume': 'Volume'
                 }, inplace=True)
+
+                print(f"Carregados {len(df)} registros para {ticker} do banco de dados")
+            else:
+                print(f"Nenhum dado encontrado para {ticker} no banco de dados")
+
         except Exception as e:
             print(f"Erro ao carregar dados: {e}")
             df = pd.DataFrame()
 
-        conn.close()
+        finally:
+            conn.close()
+
         return df
+
+    def save_prediction(self, ticker, prediction_date, prediction, confidence):
+        """Salva uma previsão no banco de dados"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        created_at = datetime.now().isoformat()
+
+        try:
+            cursor.execute('''
+            INSERT INTO predictions (ticker, prediction_date, prediction, confidence, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ''', (ticker, prediction_date, prediction, confidence, created_at))
+
+            conn.commit()
+            print(f"Previsão salva para {ticker} na data {prediction_date}")
+
+        except Exception as e:
+            print(f"Erro ao salvar previsão: {e}")
+            conn.rollback()
+
+        finally:
+            conn.close()
+
+    def get_predictions(self, ticker, limit=10):
+        """Recupera as últimas previsões para um ticker"""
+        conn = self._get_connection()
+
+        try:
+            query = """
+            SELECT prediction_date, prediction, confidence, created_at 
+            FROM predictions 
+            WHERE ticker = ? 
+            ORDER BY created_at DESC 
+            LIMIT ?
+            """
+            df = pd.read_sql_query(query, conn, params=[ticker, limit], parse_dates=['prediction_date', 'created_at'])
+            return df
+
+        except Exception as e:
+            print(f"Erro ao carregar previsões: {e}")
+            return pd.DataFrame()
+
+        finally:
+            conn.close()

@@ -1,7 +1,5 @@
 from datetime import datetime, timedelta
-
 import yfinance as yf
-
 from src.database import DatabaseManager
 
 
@@ -28,8 +26,12 @@ class DataLoader:
             test_start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
             data = yf.download(ticker, start=test_start_date, end=test_end_date, progress=False)
 
-        # Salvar no banco
-        self.db_manager.save_stock_data(data, ticker)
+        # Salvar no banco - garantir que temos dados
+        if not data.empty:
+            self.db_manager.save_stock_data(data, ticker)
+        else:
+            print("Atenção: Nenhum dado foi baixado para salvar no banco")
+
         return data
 
     def get_data(self, ticker, start_date, end_date):
@@ -51,3 +53,25 @@ class DataLoader:
 
         # Se não encontrou no banco, baixa os dados
         return self.download_data(ticker, start_date, end_date)
+
+    def get_data_with_fallback(self, ticker, start_date, end_date):
+        """Obtém dados com fallback para período mais recente se necessário"""
+        try:
+            data = self.get_data(ticker, start_date, end_date)
+
+            # Se não encontrou dados no período especificado, buscar dados mais recentes
+            if data.empty:
+                print(f"Nenhum dado encontrado para {ticker} no período {start_date} a {end_date}")
+                print("Buscando dados do último ano...")
+
+                fallback_end = datetime.now().strftime('%Y-%m-%d')
+                fallback_start = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+
+                data = self.get_data(ticker, fallback_start, fallback_end)
+
+            return data
+
+        except Exception as e:
+            print(f"Erro ao obter dados: {e}")
+            # Fallback para download direto
+            return self.download_data(ticker, start_date, end_date)

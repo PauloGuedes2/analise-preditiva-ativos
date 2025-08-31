@@ -3,11 +3,12 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import classification_report, mean_absolute_error, r2_score, accuracy_score
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
+
+from src.data_loader import DataLoader
 
 warnings.filterwarnings('ignore')
 
@@ -19,76 +20,61 @@ class StockPredictor:
         self.scaler = StandardScaler()
         self.best_params_clf = None
         self.best_params_reg = None
-
-    def download_data(self, ticker, start_date, end_date):
-        """Baixa dados do yfinance"""
-        print(f"Tentando baixar dados para {ticker}")
-
-        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-
-        data = yf.download(ticker, start=start_dt, end=end_dt, progress=False)
-
-        if data.empty or len(data) < 10:
-            print("❌ Dados não disponíveis. Usando dados históricos...")
-            test_end_date = datetime.now().strftime('%Y-%m-%d')
-            test_start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-            data = yf.download(ticker, start=test_start_date, end=test_end_date, progress=False)
-
-        return data
+        self.features_used = None  # Para armazenar as features usadas no treino
 
     def create_features(self, df):
-        """Cria features para ambos os modelos"""
+        """Cria features para o modelo - versão segura temporalmente"""
         df = df.copy()
 
-        # Features básicas
+        # Features que NÃO usam informações futuras
         df['daily_return'] = df['Close'].pct_change()
 
-        # Médias Móveis
+        # Médias Móveis (apenas dados passados)
         for window in [5, 10, 20, 50]:
-            df[f'MA_{window}'] = df['Close'].rolling(window=window).mean()
+            df[f'MA_{window}'] = df['Close'].rolling(window=window, min_periods=1).mean()
 
+        # Ratios de Médias Móveis
         df['MA_ratio_5_20'] = df['MA_5'] / df['MA_20']
         df['MA_ratio_10_50'] = df['MA_10'] / df['MA_50']
 
-        # Volatilidade
-        df['volatility_10'] = df['daily_return'].rolling(window=10).std()
-        df['volatility_20'] = df['daily_return'].rolling(window=20).std()
+        # Volatilidade (rolling com dados passados)
+        df['volatility_10'] = df['daily_return'].rolling(window=10, min_periods=1).std()
+        df['volatility_20'] = df['daily_return'].rolling(window=20, min_periods=1).std()
 
-        # RSI
+        # RSI (apenas dados passados)
         delta = df['Close'].diff()
         gain = delta.where(delta > 0, 0)
         loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
+
+        avg_gain = gain.rolling(window=14, min_periods=1).mean()
+        avg_loss = loss.rolling(window=14, min_periods=1).mean()
+
         rs = avg_gain / avg_loss
         df['RSI'] = 100 - (100 / (1 + rs))
 
-        # MACD
-        exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+        # MACD (apenas dados passados)
+        exp12 = df['Close'].ewm(span=12, adjust=False, min_periods=1).mean()
+        exp26 = df['Close'].ewm(span=26, adjust=False, min_periods=1).mean()
         df['MACD'] = exp12 - exp26
-        df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False, min_periods=1).mean()
 
         # Volume features
         if 'Volume' in df.columns:
-            df['volume_ma_5'] = df['Volume'].rolling(window=5).mean()
-            df['volume_ma_20'] = df['Volume'].rolling(window=20).mean()
+            df['volume_ma_5'] = df['Volume'].rolling(window=5, min_periods=1).mean()
+            df['volume_ma_20'] = df['Volume'].rolling(window=20, min_periods=1).mean()
             df['volume_ratio'] = df['volume_ma_5'] / df['volume_ma_20']
             df['volume_change'] = df['Volume'].pct_change()
 
-        # Retornos defasados
+        # Retornos defasados (apenas dados passados)
         for lag in [1, 2, 3, 5, 7]:
             df[f'return_lag_{lag}'] = df['daily_return'].shift(lag)
 
-        # ALVO PARA CLASSIFICAÇÃO (Alta/Queda)
+        # 🔥 ALVO: Prever o PRÓXIMO dia (shift -1)
         df['target_class'] = (df['daily_return'].shift(-1) > 0).astype(int)
+        df['target_price'] = df['Close'].shift(-1)
+        df['target_return'] = df['daily_return'].shift(-1)
 
-        # ALVO PARA REGRESSÃO (Preço Futuro)
-        df['target_price'] = df['Close'].shift(-1)  # Preço do próximo dia
-        df['target_return'] = df['daily_return'].shift(-1)  # Retorno do próximo dia
-
-        # Remove linhas com NaN
+        # Remove linhas com NaN (as primeiras linhas devido aos cálculos rolling)
         df = df.dropna()
 
         return df
@@ -115,19 +101,6 @@ class StockPredictor:
         X_scaled = pd.DataFrame(X_scaled, columns=available_features, index=X.index)
 
         return X, X_scaled, y_class, y_price, y_return, available_features
-
-    def temporal_split(self, X, y, train_ratio=0.8):
-        """Split temporal"""
-        split_idx = int(len(X) * train_ratio)
-
-        if isinstance(X, pd.DataFrame):
-            X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-        else:
-            X_train, X_test = X[:split_idx], X[split_idx:]
-
-        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-
-        return X_train, X_test, y_train, y_test
 
     def train_models(self, X_train, X_train_scaled, y_class, y_price):
         """Treina ambos os modelos"""
@@ -170,6 +143,10 @@ class StockPredictor:
         self.regressor = grid_reg.best_estimator_
         self.best_params_reg = grid_reg.best_params_
 
+        # Armazenar as features usadas no treino
+        self.features_used = X_train.columns.tolist()
+        print(f"✅ Features utilizadas no treino: {len(self.features_used)}")
+
     def evaluate_models(self, X_test, X_test_scaled, y_class, y_price):
         """Avalia ambos os modelos"""
         print("\n📊 AVALIAÇÃO DO MODELO DE CLASSIFICAÇÃO:")
@@ -204,7 +181,7 @@ class StockPredictor:
         # Previsão de preço
         price_pred = self.regressor.predict(X_last_scaled)[0]
 
-        # 🔥 CORREÇÃO AQUI: Garantir que current_price é um número float
+        # Garantir que current_price é um número float
         if hasattr(current_price, 'iloc'):
             current_price_val = current_price.iloc[0] if hasattr(current_price, 'iloc') else float(current_price)
         else:
@@ -283,7 +260,7 @@ class StockPredictor:
         else:
             signals.append("🚫 EVITAR (Retorno < -0.5%)")
 
-        # tamanho da posição sugerida
+        # Tamanho da posição sugerida
         if confidence > 0.65 and abs(expected_return) > 0.008:
             position_size = "Tamanho: NORMAL"
         elif confidence > 0.75 and abs(expected_return) > 0.015:
@@ -296,7 +273,6 @@ class StockPredictor:
 
     def print_detailed_analysis(self, y_test, y_pred, returns_test, prediction):
         """Imprime análise detalhada"""
-
         print("\n" + "=" * 70)
         print("📊 ANÁLISE DETALHADA DE PERFORMANCE")
         print("=" * 70)
@@ -349,12 +325,28 @@ class StockPredictor:
         if risk_metrics['sharpe_ratio'] < 0:
             print("   ⚠️  SHARPE NEGATIVO - Estratégia não lucrativa")
 
+    def prepare_for_prediction(self, recent_data):
+        """Prepara dados recentes para predição usando features do treino"""
+        # Criar features para os dados recentes
+        recent_with_features = self.create_features(recent_data)
+
+        # Preparar dados mantendo apenas as features usadas no treino
+        X_recent, X_recent_scaled, _, _, _, _ = self.prepare_training_data(recent_with_features)
+
+        # Manter apenas as features usadas no treino
+        if self.features_used:
+            available_features = [f for f in self.features_used if f in X_recent.columns]
+            X_recent = X_recent[available_features]
+            X_recent_scaled = X_recent_scaled[available_features]
+
+        return X_recent, X_recent_scaled
+
 
 def main():
     # Configurações
     TICKER = "PETR4.SA"
-    END_DATE = datetime.now().strftime('%Y-%m-%d')  # Hoje
-    START_DATE = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')  # 2 anos atrás
+    END_DATE = datetime.now().strftime('%Y-%m-%d')
+    START_DATE = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
 
     print("🚀 INICIANDO SISTEMA COMPLETO DE PREVISÃO")
     print(f"📊 Ativo: {TICKER}")
@@ -362,47 +354,67 @@ def main():
     print("=" * 60)
 
     try:
-        # 1. Inicializar predictor
+        # 1. Inicializar predictor e data loader
         predictor = StockPredictor()
+        data_loader = DataLoader()
 
-        # 2. Baixar dados
-        data = predictor.download_data(TICKER, START_DATE, END_DATE)
+        # 2. Obter dados (usando banco se disponível)
+        data = data_loader.get_data_with_fallback(TICKER, START_DATE, END_DATE)
 
         print(f"✅ Dados carregados: {len(data)} registros")
         print(f"📅 Período: {data.index.min().strftime('%Y-%m-%d')} a {data.index.max().strftime('%Y-%m-%d')}")
 
-        # 3. Engenharia de features
-        df_with_features = predictor.create_features(data)
-        print(f"✅ Features criadas: {len(df_with_features)} amostras")
+        # 3. 🔥 CORREÇÃO CRÍTICA: Split temporal PRIMEIRO, depois engenharia de features
+        split_idx = int(len(data) * 0.8)
+        train_data = data.iloc[:split_idx].copy()
+        test_data = data.iloc[split_idx:].copy()
 
-        # 4. Preparar dados
-        X, X_scaled, y_class, y_price, y_return, features = predictor.prepare_training_data(df_with_features)
+        print(f"📊 Split temporal - Treino: {len(train_data)}, Teste: {len(test_data)}")
+        print(
+            f"📅 Treino: {train_data.index.min().strftime('%Y-%m-%d')} a {train_data.index.max().strftime('%Y-%m-%d')}")
+        print(f"📈 Teste: {test_data.index.min().strftime('%Y-%m-%d')} a {test_data.index.max().strftime('%Y-%m-%d')}")
+
+        # 4. Engenharia de features SEPARADAMENTE para treino e teste
+        print("🛠️  Criando features para dados de TREINO...")
+        train_with_features = predictor.create_features(train_data)
+
+        print("🛠️  Criando features para dados de TESTE...")
+        test_with_features = predictor.create_features(test_data)
+
+        # 5. Preparar dados de treino
+        X_train, X_train_scaled, y_class_train, y_price_train, y_return_train, features = predictor.prepare_training_data(
+            train_with_features)
+
+        # 6. Preparar dados de teste (usando MESMAS features)
+        X_test, X_test_scaled, y_class_test, y_price_test, y_return_test, _ = predictor.prepare_training_data(
+            test_with_features)
+
+        # Garantir que as features são as mesmas
+        X_test = X_test[features]
+        X_test_scaled = X_test_scaled[features]
+
         print(f"📋 Features utilizadas: {len(features)}")
+        print(f"📊 Treino: {len(X_train)} amostras")
+        print(f"📈 Teste: {len(X_test)} amostras")
 
-        # 5. Split temporal
-        X_train, X_test, y_class_train, y_class_test = predictor.temporal_split(X, y_class)
-        X_train_scaled, X_test_scaled, y_price_train, y_price_test = predictor.temporal_split(X_scaled, y_price)
-
-        print(f"📊 Split temporal - Treino: {len(X_train)}, Teste: {len(X_test)}")
-
-        train_dates = f"{X_train.index.min().strftime('%Y-%m-%d')} a {X_train.index.max().strftime('%Y-%m-%d')}"
-        test_dates = f"{X_test.index.min().strftime('%Y-%m-%d')} a {X_test.index.max().strftime('%Y-%m-%d')}"
-
-        print(f"📅 Período de Treino: {train_dates}")
-        print(f"📈 Período de Teste: {test_dates}")
-
-        # 6. Treinar modelos
+        # 7. Treinar modelos APENAS com dados de treino
         predictor.train_models(X_train, X_train_scaled, y_class_train, y_price_train)
 
-        # 7. Avaliar modelos
+        # 8. Avaliar modelos APENAS com dados de teste
         predictor.evaluate_models(X_test, X_test_scaled, y_class_test, y_price_test)
 
-        # 8. Prever próximo dia
+        # 9. Prever próximo dia (usando os dados mais recentes disponíveis)
         current_price = data['Close'].iloc[-1]
-        last_features = X.iloc[-1:].copy()
-        last_features_scaled = X_scaled.iloc[-1:].copy()
 
-        prediction = predictor.predict_next_day(last_features, last_features_scaled, current_price)
+        # Criar features para o último dia (sem vazar informações futuras)
+        last_day_data = data.iloc[-30:].copy()  # Pegar últimos 30 dias para ter features completas
+        X_last, X_last_scaled = predictor.prepare_for_prediction(last_day_data)
+
+        # Pegar apenas a última linha (último dia disponível)
+        X_last = X_last.iloc[[-1]]
+        X_last_scaled = X_last_scaled.iloc[[-1]]
+
+        prediction = predictor.predict_next_day(X_last, X_last_scaled, current_price)
 
         print("\n" + "=" * 60)
         print("🔮 PREVISÃO PARA O PRÓXIMO DIA")
@@ -414,11 +426,11 @@ def main():
         print(f"🔼 Variação esperada: R$ {prediction['price_change']:.2f}")
         print(f"📈 Retorno esperado: {prediction['expected_return']:.2%}")
 
-        # 9. Análise detalhada e métricas
+        # 10. Análise detalhada e métricas
         print("\n📈 CALCULANDO MÉTRICAS AVANÇADAS...")
 
         # Calcular retornos reais do período de teste
-        returns_test = df_with_features['target_return'].iloc[-len(y_class_test):]
+        returns_test = test_with_features['target_return']
 
         # Fazer previsões completas para o teste
         y_pred_class = predictor.classifier.predict(X_test)
@@ -426,7 +438,7 @@ def main():
         # Gerar análise detalhada
         predictor.print_detailed_analysis(y_class_test, y_pred_class, returns_test, prediction)
 
-        # 10. Previsão para os próximos dias
+        # 11. Previsão para os próximos dias
         print("\n" + "=" * 70)
         print("🔮 PREVISÃO PARA OS PRÓXIMOS 3 DIAS")
         print("=" * 70)
@@ -434,22 +446,24 @@ def main():
         # Simular previsões para os próximos dias (usando dados recentes)
         for days_ahead in [1, 2, 3]:
             try:
-                future_features = X.iloc[-days_ahead:].copy()
-                future_features_scaled = X_scaled.iloc[-days_ahead:].copy()
-                current_price = data['Close'].iloc[-days_ahead]
+                # Pegar dados de dias anteriores
+                recent_data = data.iloc[-(30 + days_ahead):-days_ahead].copy() if days_ahead > 0 else data.iloc[
+                                                                                                      -30:].copy()
+                X_future, X_future_scaled = predictor.prepare_for_prediction(recent_data)
 
-                future_pred = predictor.predict_next_day(
-                    future_features.iloc[[0]],
-                    future_features_scaled.iloc[[0]],
-                    current_price
-                )
+                # Pegar o dia mais recente disponível
+                X_day = X_future.iloc[[-1]]
+                X_day_scaled = X_future_scaled.iloc[[-1]]
+                current_price_day = data['Close'].iloc[-(days_ahead + 1)] if days_ahead > 0 else data['Close'].iloc[-1]
+
+                future_pred = predictor.predict_next_day(X_day, X_day_scaled, current_price_day)
 
                 print(f"📅 Dia +{days_ahead}: {future_pred['direction']} "
                       f"(Retorno: {future_pred['expected_return']:.2%}, "
                       f"Conf: {future_pred['direction_confidence']:.2%})")
 
-            except:
-                print(f"📅 Dia +{days_ahead}: Dados insuficientes")
+            except Exception as e:
+                print(f"📅 Dia +{days_ahead}: Erro na previsão - {e}")
 
         # Análise de risco
         print("\n⚠️  ANÁLISE DE RISCO:")
