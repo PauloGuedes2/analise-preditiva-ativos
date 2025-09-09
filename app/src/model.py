@@ -1,6 +1,5 @@
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
-import numpy as np
 
 
 class StockPredictor:

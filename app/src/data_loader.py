@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
+
 import yfinance as yf
+
 from src.database import DatabaseManager
 
 

@@ -348,7 +348,7 @@ def main():
     # Configurações
     # TICKER = "PETR4.SA"
     # TICKER = "BBAS3.SA" # Banco do Brasil arrumar
-    TICKER = "MELI34.SA"
+    TICKER = "AMZO34.SA"
     END_DATE = datetime.now().strftime('%Y-%m-%d')
     START_DATE = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
 
@@ -486,7 +486,3 @@ def main():
         print(f"❌ Erro: {str(e)}")
         import traceback
         traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()
