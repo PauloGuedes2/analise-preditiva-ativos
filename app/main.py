@@ -81,20 +81,24 @@ class StockPredictor:
 
     def prepare_training_data(self, df):
         """Prepara dados para treinamento"""
-        # Features selecionadas
         features = [
             'MA_5', 'MA_10', 'MA_20', 'MA_50', 'MA_ratio_5_20', 'MA_ratio_10_50',
             'volatility_10', 'volatility_20', 'RSI', 'MACD', 'MACD_signal',
             'volume_ratio', 'volume_change', 'return_lag_1', 'return_lag_2', 'return_lag_3'
         ]
 
-        # Manter apenas features disponíveis
         available_features = [f for f in features if f in df.columns]
 
         X = df[available_features]
-        y_class = df['target_class']  # Para classificação
-        y_price = df['target_price']  # Para regressão (preço)
-        y_return = df['target_return']  # Para regressão (retorno)
+        y_class = df['target_class']
+        y_price = df['target_price']
+        y_return = df['target_return']
+
+        # Substituir infinitos por NaN e remover linhas com NaN
+        X = X.replace([np.inf, -np.inf], np.nan).dropna()
+        y_class = y_class.loc[X.index]
+        y_price = y_price.loc[X.index]
+        y_return = y_return.loc[X.index]
 
         # Normalizar features para regressão
         X_scaled = self.scaler.fit_transform(X)
@@ -329,13 +333,11 @@ class StockPredictor:
         """Prepara dados recentes para predição usando features do treino"""
         # Criar features para os dados recentes
         recent_with_features = self.create_features(recent_data)
-
-        # Preparar dados mantendo apenas as features usadas no treino
         X_recent, X_recent_scaled, _, _, _, _ = self.prepare_training_data(recent_with_features)
 
-        # Manter apenas as features usadas no treino
+        # Corrigir: garantir que available_features são strings
         if self.features_used:
-            available_features = [f for f in self.features_used if f in X_recent.columns]
+            available_features = [str(f[0]) if isinstance(f, tuple) else str(f) for f in self.features_used]
             X_recent = X_recent[available_features]
             X_recent_scaled = X_recent_scaled[available_features]
 
@@ -344,7 +346,9 @@ class StockPredictor:
 
 def main():
     # Configurações
-    TICKER = "PETR4.SA"
+    # TICKER = "PETR4.SA"
+    # TICKER = "BBAS3.SA" # Banco do Brasil arrumar
+    TICKER = "MELI34.SA"
     END_DATE = datetime.now().strftime('%Y-%m-%d')
     START_DATE = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
 
