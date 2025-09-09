@@ -58,12 +58,10 @@ class DatabaseManager:
         cursor = conn.cursor()
 
         created_at = datetime.now().isoformat()
-
-        # Converter o DataFrame para uma lista de tuplas de forma segura
         records = []
+
         for index, row in df.iterrows():
             try:
-                # Se o DataFrame tem MultiIndex, index será uma tupla
                 if isinstance(index, tuple):
                     date_str = index[0].strftime('%Y-%m-%d') if hasattr(index[0], 'strftime') else str(index[0])
                 else:
@@ -83,7 +81,6 @@ class DatabaseManager:
                 print(f"Erro ao processar linha {index}: {e}")
                 continue
 
-        # Inserir dados
         try:
             if records:
                 cursor.executemany('''
@@ -113,7 +110,6 @@ class DatabaseManager:
 
             if not df.empty:
                 df.set_index('date', inplace=True)
-                # Renomear colunas para formato padrão do pandas
                 df.rename(columns={
                     'open': 'Open',
                     'high': 'High',
