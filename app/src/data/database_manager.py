@@ -5,91 +5,121 @@ from datetime import datetime
 import pandas as pd
 
 
-class DatabaseManager:
-    def __init__(self, db_path='src/data/database.db'):
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.db_path = db_path
-        self._init_database()
+class GerenciadorBancoDados:
+    """
+    Classe responsável por gerenciar o banco de dados SQLite para armazenamento de dados de ações e previsões.
+    
+    Esta classe fornece métodos para criar, salvar e recuperar dados históricos de ações,
+    bem como armazenar e consultar previsões do modelo de machine learning.
+    """
+    
+    def __init__(self, caminho_bd='src/data/database.db'):
+        """
+        Inicializa o gerenciador de banco de dados.
+        
+        Args:
+            caminho_bd (str): Caminho para o arquivo do banco de dados SQLite
+        """
+        os.makedirs(os.path.dirname(caminho_bd), exist_ok=True)
+        self.caminho_bd = caminho_bd
+        self._inicializar_banco()
 
-    def _get_connection(self):
-        """Retorna uma conexão com o banco de dados"""
-        return sqlite3.connect(self.db_path)
+    def _obter_conexao(self):
+        """
+        Retorna uma conexão com o banco de dados SQLite.
+        
+        Returns:
+            sqlite3.Connection: Conexão ativa com o banco de dados
+        """
+        return sqlite3.connect(self.caminho_bd)
 
-    def _init_database(self):
-        """Inicializa o banco de dados e cria tabelas se não existirem"""
-        conn = self._get_connection()
+    def _inicializar_banco(self):
+        """
+        Inicializa o banco de dados e cria as tabelas necessárias se não existirem.
+        
+        Cria duas tabelas principais:
+        - precos_acoes: Para armazenar dados históricos de preços
+        - previsoes: Para armazenar previsões do modelo
+        """
+        conn = self._obter_conexao()
         cursor = conn.cursor()
 
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS stock_prices (
-            date TEXT,
+        CREATE TABLE IF NOT EXISTS precos_acoes (
+            data TEXT,
             ticker TEXT,
-            open REAL,
-            high REAL,
-            low REAL,
-            close REAL,
+            abertura REAL,
+            maxima REAL,
+            minima REAL,
+            fechamento REAL,
             volume INTEGER,
-            created_at TEXT,
-            PRIMARY KEY (date, ticker)
+            criado_em TEXT,
+            PRIMARY KEY (data, ticker)
         )
         ''')
 
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS predictions (
+        CREATE TABLE IF NOT EXISTS previsoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT,
-            prediction_date TEXT,
-            prediction INTEGER,
-            confidence REAL,
-            created_at TEXT
+            data_previsao TEXT,
+            previsao INTEGER,
+            confianca REAL,
+            criado_em TEXT
         )
         ''')
 
         conn.commit()
         conn.close()
 
-    def save_stock_data(self, df, ticker):
-        """Salva dados da ação no banco - versão simplificada"""
+    def salvar_dados_acao(self, df, ticker):
+        """
+        Salva dados históricos de uma ação no banco de dados.
+        
+        Args:
+            df (pandas.DataFrame): DataFrame com dados históricos (Open, High, Low, Close, Volume)
+            ticker (str): Símbolo da ação (ex: 'PETR4.SA')
+        """
         if df.empty:
             print("DataFrame vazio. Nada para salvar.")
             return
 
-        conn = self._get_connection()
+        conn = self._obter_conexao()
         cursor = conn.cursor()
 
-        created_at = datetime.now().isoformat()
-        records = []
+        criado_em = datetime.now().isoformat()
+        registros = []
 
-        for index, row in df.iterrows():
+        for indice, linha in df.iterrows():
             try:
-                if isinstance(index, tuple):
-                    date_str = index[0].strftime('%Y-%m-%d') if hasattr(index[0], 'strftime') else str(index[0])
+                if isinstance(indice, tuple):
+                    data_str = indice[0].strftime('%Y-%m-%d') if hasattr(indice[0], 'strftime') else str(indice[0])
                 else:
-                    date_str = index.strftime('%Y-%m-%d') if hasattr(index, 'strftime') else str(index)
+                    data_str = indice.strftime('%Y-%m-%d') if hasattr(indice, 'strftime') else str(indice)
 
-                records.append((
-                    date_str,
+                registros.append((
+                    data_str,
                     ticker,
-                    float(row['Open']),
-                    float(row['High']),
-                    float(row['Low']),
-                    float(row['Close']),
-                    int(row['Volume']),
-                    created_at
+                    float(linha['Open']),
+                    float(linha['High']),
+                    float(linha['Low']),
+                    float(linha['Close']),
+                    int(linha['Volume']),
+                    criado_em
                 ))
             except Exception as e:
-                print(f"Erro ao processar linha {index}: {e}")
+                print(f"Erro ao processar linha {indice}: {e}")
                 continue
 
         try:
-            if records:
+            if registros:
                 cursor.executemany('''
-                INSERT OR REPLACE INTO stock_prices 
-                (date, ticker, open, high, low, close, volume, created_at)
+                INSERT OR REPLACE INTO precos_acoes 
+                (data, ticker, abertura, maxima, minima, fechamento, volume, criado_em)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', records)
+                ''', registros)
 
-                print(f"Salvos {len(records)} registros para {ticker} no banco de dados")
+                print(f"Salvos {len(registros)} registros para {ticker} no banco de dados")
                 conn.commit()
             else:
                 print("Nenhum registro válido para salvar")
@@ -100,21 +130,29 @@ class DatabaseManager:
 
         conn.close()
 
-    def load_stock_data(self, ticker):
-        """Carrega dados da ação do banco"""
-        conn = self._get_connection()
+    def carregar_dados_acao(self, ticker):
+        """
+        Carrega dados históricos de uma ação do banco de dados.
+        
+        Args:
+            ticker (str): Símbolo da ação (ex: 'PETR4.SA')
+            
+        Returns:
+            pandas.DataFrame: DataFrame com dados históricos da ação
+        """
+        conn = self._obter_conexao()
 
         try:
-            query = "SELECT date, open, high, low, close, volume FROM stock_prices WHERE ticker = ? ORDER BY date"
-            df = pd.read_sql_query(query, conn, params=[ticker], parse_dates=['date'])
+            consulta = "SELECT data, abertura, maxima, minima, fechamento, volume FROM precos_acoes WHERE ticker = ? ORDER BY data"
+            df = pd.read_sql_query(consulta, conn, params=[ticker], parse_dates=['data'])
 
             if not df.empty:
-                df.set_index('date', inplace=True)
+                df.set_index('data', inplace=True)
                 df.rename(columns={
-                    'open': 'Open',
-                    'high': 'High',
-                    'low': 'Low',
-                    'close': 'Close',
+                    'abertura': 'Open',
+                    'maxima': 'High',
+                    'minima': 'Low',
+                    'fechamento': 'Close',
                     'volume': 'Volume'
                 }, inplace=True)
 
@@ -131,21 +169,29 @@ class DatabaseManager:
 
         return df
 
-    def save_prediction(self, ticker, prediction_date, prediction, confidence):
-        """Salva uma previsão no banco de dados"""
-        conn = self._get_connection()
+    def salvar_previsao(self, ticker, data_previsao, previsao, confianca):
+        """
+        Salva uma previsão do modelo no banco de dados.
+        
+        Args:
+            ticker (str): Símbolo da ação (ex: 'PETR4.SA')
+            data_previsao (str): Data da previsão no formato 'YYYY-MM-DD'
+            previsao (int): Previsão (0 para baixa, 1 para alta)
+            confianca (float): Nível de confiança da previsão (0.0 a 1.0)
+        """
+        conn = self._obter_conexao()
         cursor = conn.cursor()
 
-        created_at = datetime.now().isoformat()
+        criado_em = datetime.now().isoformat()
 
         try:
             cursor.execute('''
-            INSERT INTO predictions (ticker, prediction_date, prediction, confidence, created_at)
+            INSERT INTO previsoes (ticker, data_previsao, previsao, confianca, criado_em)
             VALUES (?, ?, ?, ?, ?)
-            ''', (ticker, prediction_date, prediction, confidence, created_at))
+            ''', (ticker, data_previsao, previsao, confianca, criado_em))
 
             conn.commit()
-            print(f"Previsão salva para {ticker} na data {prediction_date}")
+            print(f"Previsão salva para {ticker} na data {data_previsao}")
 
         except Exception as e:
             print(f"Erro ao salvar previsão: {e}")
@@ -154,19 +200,28 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def get_predictions(self, ticker, limit=10):
-        """Recupera as últimas previsões para um ticker"""
-        conn = self._get_connection()
+    def obter_previsoes(self, ticker, limite=10):
+        """
+        Recupera as últimas previsões para um ticker específico.
+        
+        Args:
+            ticker (str): Símbolo da ação (ex: 'PETR4.SA')
+            limite (int): Número máximo de previsões a retornar
+            
+        Returns:
+            pandas.DataFrame: DataFrame com as previsões mais recentes
+        """
+        conn = self._obter_conexao()
 
         try:
-            query = """
-            SELECT prediction_date, prediction, confidence, created_at 
-            FROM predictions 
+            consulta = """
+            SELECT data_previsao, previsao, confianca, criado_em 
+            FROM previsoes 
             WHERE ticker = ? 
-            ORDER BY created_at DESC 
+            ORDER BY criado_em DESC 
             LIMIT ?
             """
-            df = pd.read_sql_query(query, conn, params=[ticker, limit], parse_dates=['prediction_date', 'created_at'])
+            df = pd.read_sql_query(consulta, conn, params=[ticker, limite], parse_dates=['data_previsao', 'criado_em'])
             return df
 
         except Exception as e:

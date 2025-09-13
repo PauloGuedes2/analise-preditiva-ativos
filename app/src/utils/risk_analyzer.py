@@ -2,66 +2,102 @@ import numpy as np
 from sklearn.metrics import accuracy_score
 
 
-class RiskAnalyzer:
+class AnalisadorRisco:
+    """
+    Classe responsável por calcular métricas de risco e gerar sinais de trading.
+    
+    Esta classe fornece métodos estáticos para avaliar a performance de estratégias
+    de trading e gerar recomendações baseadas nas previsões do modelo.
+    """
+    
     @staticmethod
-    def calculate_risk_metrics(y_test, y_pred, returns_test):
-        """Calcula métricas de risco e performance"""
-        results = {}
+    def calcular_metricas_risco(y_teste, y_pred, retornos_teste):
+        """
+        Calcula métricas abrangentes de risco e performance de trading.
+        
+        Args:
+            y_teste (array-like): Valores reais da direção do preço
+            y_pred (array-like): Previsões da direção do preço
+            retornos_teste (array-like): Retornos reais observados
+            
+        Returns:
+            dict: Dicionário com métricas de performance calculadas
+        """
+        resultados = {}
 
-        results['accuracy'] = accuracy_score(y_test, y_pred)
-        results['total_profit'] = returns_test[y_pred == 1].sum()
+        # Acurácia das previsões
+        resultados['acuracia'] = accuracy_score(y_teste, y_pred)
+        
+        # Lucro total das operações previstas como alta
+        resultados['lucro_total'] = retornos_teste[y_pred == 1].sum()
 
-        excess_returns = returns_test - 0.0001
-        results['sharpe_ratio'] = excess_returns.mean() / excess_returns.std() * np.sqrt(252)
+        # Sharpe Ratio (retorno ajustado ao risco)
+        retornos_excesso = retornos_teste - 0.0001  # Taxa livre de risco
+        resultados['sharpe_ratio'] = retornos_excesso.mean() / retornos_excesso.std() * np.sqrt(252)
 
-        cumulative_returns = (1 + returns_test).cumprod()
-        peak = cumulative_returns.expanding().max()
-        drawdown = (cumulative_returns - peak) / peak
-        results['max_drawdown'] = drawdown.min()
+        # Drawdown máximo (maior perda acumulada)
+        retornos_acumulados = (1 + retornos_teste).cumprod()
+        pico = retornos_acumulados.expanding().max()
+        drawdown = (retornos_acumulados - pico) / pico
+        resultados['drawdown_maximo'] = drawdown.min()
 
-        winning_trades = returns_test[y_pred == 1] > 0
-        results['win_rate'] = winning_trades.mean() if len(winning_trades) > 0 else 0
+        # Taxa de acerto das operações
+        operacoes_vencedoras = retornos_teste[y_pred == 1] > 0
+        resultados['taxa_acerto'] = operacoes_vencedoras.mean() if len(operacoes_vencedoras) > 0 else 0
 
-        gross_profit = returns_test[(y_pred == 1) & (returns_test > 0)].sum()
-        gross_loss = abs(returns_test[(y_pred == 1) & (returns_test < 0)].sum())
-        results['profit_factor'] = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+        # Fator de lucro (lucro bruto / perda bruta)
+        lucro_bruto = retornos_teste[(y_pred == 1) & (retornos_teste > 0)].sum()
+        perda_bruta = abs(retornos_teste[(y_pred == 1) & (retornos_teste < 0)].sum())
+        resultados['fator_lucro'] = lucro_bruto / perda_bruta if perda_bruta > 0 else float('inf')
 
-        return results
+        return resultados
 
     @staticmethod
-    def generate_trading_signals(prediction):
-        """Gera sinais de trading baseado na previsão"""
-        signals = []
+    def gerar_sinais_trading(previsao):
+        """
+        Gera sinais de trading baseados na previsão do modelo.
+        
+        Args:
+            previsao (dict): Dicionário com previsão contendo direção, confiança e retorno esperado
+            
+        Returns:
+            list: Lista de strings com sinais e recomendações de trading
+        """
+        sinais = []
 
-        if prediction['direction'] == 'ALTA':
-            signals.append("📈 SINAL: COMPRA")
+        # Sinal de direção
+        if previsao['direction'] == 'ALTA':
+            sinais.append("📈 SINAL: COMPRA")
         else:
-            signals.append("📉 SINAL: VENDA")
+            sinais.append("📉 SINAL: VENDA")
 
-        confidence = prediction['direction_confidence']
-        if confidence > 0.7:
-            signals.append("💪 FORTE (Confiança > 70%)")
-        elif confidence > 0.6:
-            signals.append("👍 MÉDIO (Confiança 60-70%)")
+        # Força do sinal baseada na confiança
+        confianca = previsao['direction_confidence']
+        if confianca > 0.7:
+            sinais.append("💪 FORTE (Confiança > 70%)")
+        elif confianca > 0.6:
+            sinais.append("👍 MÉDIO (Confiança 60-70%)")
         else:
-            signals.append("⚠️  FRACO (Confiança < 60%)")
+            sinais.append("⚠️  FRACO (Confiança < 60%)")
 
-        expected_return = prediction['expected_return']
-        if expected_return > 0.015:
-            signals.append("🎯 ALTO POTENCIAL (Retorno > 1.5%)")
-        elif expected_return > 0.005:
-            signals.append("✅ OPERAR (Retorno 0.5-1.5%)")
-        elif expected_return > -0.005:
-            signals.append("⏸️  NEUTRO (Retorno -0.5% a 0.5%)")
+        # Potencial de retorno
+        retorno_esperado = previsao['expected_return']
+        if retorno_esperado > 0.015:
+            sinais.append("🎯 ALTO POTENCIAL (Retorno > 1.5%)")
+        elif retorno_esperado > 0.005:
+            sinais.append("✅ OPERAR (Retorno 0.5-1.5%)")
+        elif retorno_esperado > -0.005:
+            sinais.append("⏸️  NEUTRO (Retorno -0.5% a 0.5%)")
         else:
-            signals.append("🚫 EVITAR (Retorno < -0.5%)")
+            sinais.append("🚫 EVITAR (Retorno < -0.5%)")
 
-        if confidence > 0.65 and abs(expected_return) > 0.008:
-            position_size = "Tamanho: NORMAL"
-        elif confidence > 0.75 and abs(expected_return) > 0.015:
-            position_size = "Tamanho: MAIOR"
+        # Recomendação de tamanho da posição
+        if confianca > 0.65 and abs(retorno_esperado) > 0.008:
+            tamanho_posicao = "Tamanho: NORMAL"
+        elif confianca > 0.75 and abs(retorno_esperado) > 0.015:
+            tamanho_posicao = "Tamanho: MAIOR"
         else:
-            position_size = "Tamanho: REDUZIDO"
-        signals.append(position_size)
+            tamanho_posicao = "Tamanho: REDUZIDO"
+        sinais.append(tamanho_posicao)
 
-        return signals
+        return sinais
