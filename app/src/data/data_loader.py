@@ -34,27 +34,34 @@ class DataLoaderRefinado:
             """)
             c.commit()
 
-    def baixar_dados_yf(self, ticker: str, periodo: str = "2y", intervalo: str = "1d") -> pd.DataFrame:
+    def baixar_dados_yf(self, ticker: str, periodo: str = "3y", intervalo: str = "1d") -> tuple[
+        pd.DataFrame, pd.DataFrame]:
         """
-        Baixa candles de um ticker via yfinance.
-        :param ticker: código (ex: "PETR4.SA")
-        :param periodo: janela (ex: "2y")
-        :param intervalo: intervalo (ex: "1d")
-        :return: DataFrame com OHLCV
+        Baixa candles de um ticker e do IBOVESPA via yfinance.
+        :return: tupla com (DataFrame do Ticker, DataFrame do IBOV)
         """
-        df = yf.download(ticker, period=periodo, interval=intervalo, progress=False, auto_adjust=True)
-        df = df.rename(columns={
-            "Open": "Open",
-            "High": "High",
-            "Low": "Low",
-            "Close": "Close",
-            "Volume": "Volume"
-        })
-        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-        df.index = pd.to_datetime(df.index)
-        # salvar no banco
-        self.salvar_ohlcv(ticker, df)
-        return df
+        # Baixar dados do ticker e do Ibovespa em um único request
+        df_completo = yf.download(f"{ticker} ^BVSP", period=periodo, interval=intervalo, progress=False,
+                                  auto_adjust=True)
+
+        # Separar os dataframes
+        df_ticker = df_completo['Close'][ticker].to_frame('Close')
+        df_ticker['Open'] = df_completo['Open'][ticker]
+        df_ticker['High'] = df_completo['High'][ticker]
+        df_ticker['Low'] = df_completo['Low'][ticker]
+        df_ticker['Volume'] = df_completo['Volume'][ticker]
+
+        df_ibov = df_completo['Close']['^BVSP'].to_frame('Close_IBOV')
+
+        # Limpar e alinhar dados do ticker
+        df_ticker = df_ticker[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        df_ticker.index = pd.to_datetime(df_ticker.index)
+
+        # Salvar no banco (apenas o ticker, como antes)
+        self.salvar_ohlcv(ticker, df_ticker)
+
+        # Retornar ambos os dataframes
+        return df_ticker, df_ibov
 
     def salvar_ohlcv(self, ticker: str, df: pd.DataFrame):
         """Salva candles no banco SQLite"""

@@ -51,7 +51,7 @@ class FeatureEngineerRefinado:
         obv = (volume * np.sign(returns)).cumsum()
         return obv
 
-    def criar_features_basicas(self, df_ohlc: pd.DataFrame) -> pd.DataFrame:
+    def criar_features_basicas(self, df_ohlc: pd.DataFrame, df_ibov: pd.DataFrame = None) -> pd.DataFrame:
         df = df_ohlc.copy()
 
         # Garantir colunas simples
@@ -126,6 +126,16 @@ class FeatureEngineerRefinado:
         df['momentum_5'] = close.pct_change(5)
         df['momentum_10'] = close.pct_change(10)
 
+        if df_ibov is not None:
+            # Alinhar o índice do IBOV com o do ticker
+            df_ibov_aligned = df_ibov.reindex(df.index).ffill()
+
+            df['retorno_1d_ibov'] = df_ibov_aligned['Close_IBOV'].pct_change(1)
+            df['forca_relativa_ibov'] = df['retorno_1d'] - df['retorno_1d_ibov']
+            df['correlacao_ibov_20d'] = df['retorno_1d'].rolling(20).corr(df['retorno_1d_ibov'])
+            df['sma_50_ibov'] = df_ibov_aligned['Close_IBOV'].rolling(50).mean()
+            df['ibov_acima_sma50'] = (df_ibov_aligned['Close_IBOV'] > df['sma_50_ibov']).astype(int)
+
         return df.dropna()
 
     # ADICIONE ESTES MÉTODOS NOVOS na classe:
@@ -166,12 +176,12 @@ class FeatureEngineerRefinado:
     def _calcular_adx(self, high, low, close, period=14):
         pass  # Implementação complexa - podemos adicionar depois
 
-    def preparar_dataset_classificacao(self, df_ohlc: pd.DataFrame, periodo_historico: int = 504):
+    def preparar_dataset_classificacao(self, df_ohlc: pd.DataFrame, df_ibov: pd.DataFrame = None):
         """
         Prepara X (features), y (Series binária: 1 se subir, 0 se cair) e preços (Close).
         Retorna X, y, precos.
         """
-        df_feat = self.criar_features_basicas(df_ohlc)
+        df_feat = self.criar_features_basicas(df_ohlc, df_ibov) # Passa o df_ibov aqui
         close = df_feat['Close']
 
         # Label: direção do próximo dia

@@ -27,7 +27,7 @@ def carregar_modelo(ticker):
 # --- Interface do Usuário (Sidebar) ---
 st.sidebar.title("Painel de Controle")
 # Lista de tickers para os quais você treinou modelos
-TICKERS_DISPONIVEIS = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "BBDC4.SA", "B3SA3.SA", "WEGE3.SA"]
+TICKERS_DISPONIVEIS = ["PETR4.SA", "VALE3.SA", "ITSA4.SA", "TAEE11.SA", "BBSE3.SA", "ABEV3.SA"]
 ticker_selecionado = st.sidebar.selectbox("Selecione o Ativo", TICKERS_DISPONIVEIS)
 analisar_btn = st.sidebar.button("Analisar Ativo")
 
@@ -48,9 +48,8 @@ if analisar_btn:
 
         # 1. Obter dados e fazer a previsão mais recente
         with st.spinner("Buscando dados e fazendo nova previsão..."):
-            dados_recentes = loader.baixar_dados_yf(ticker_selecionado,
-                                                    periodo="3y")  # período consistente com o treino
-            X_full, y_full, precos_full = fe.preparar_dataset_classificacao(dados_recentes)
+            df_ticker, df_ibov = loader.baixar_dados_yf(ticker_selecionado, periodo="3y")
+            X_full, y_full, precos_full = fe.preparar_dataset_classificacao(df_ticker, df_ibov)
 
             X_novo = X_full.tail(1)
             previsao = modelo.prever_direcao(X_novo)
