@@ -111,6 +111,7 @@ class ClassificacaoFinalRefinado:
         return splits
 
     # ----------------------------
+    # TODO: voltar pra 100 nboot
     def selecao_estavel(self, X: pd.DataFrame, y: pd.Series, n_boot: int = 100, proporcao_top: float = 0.2):
         # Garantir que X tenha colunas simples
         if isinstance(X.columns, pd.MultiIndex):
@@ -281,6 +282,9 @@ class ClassificacaoFinalRefinado:
         ra = RiskAnalyzerRefinado()
         df_signals = self.prever_e_gerar_sinais(X_hold, precos_hold, retornar_dataframe=True)
         backtest_metrics = ra.backtest_sinais(df_signals, custo_por_trade_pct=0.0005)
+
+        if 'equity_curve' in backtest_metrics and isinstance(backtest_metrics['equity_curve'], np.ndarray):
+            backtest_metrics['equity_curve'] = backtest_metrics['equity_curve'].tolist()
 
         meta = {
             'features': self.features_selecionadas,

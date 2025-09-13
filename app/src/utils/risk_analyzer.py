@@ -53,5 +53,6 @@ class RiskAnalyzerRefinado:
             'trades': int(trades),
             'sharpe': float(sharpe),
             'max_drawdown': float(max_draw),
-            'retorno_med_diario': float(retorno_med_diario)
+            'retorno_med_diario': float(retorno_med_diario),
+            'equity_curve': equity
         }

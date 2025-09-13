@@ -52,57 +52,56 @@ def main():
             traceback.print_exc()
 
 
-def monitorar_mercado():
-    """Monitora múltiplos ativos em tempo real"""
-    tickers = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "BBDC4.SA", "B3SA3.SA", "WEGE3.SA"]
-
-    print("📡 Iniciando monitoramento do mercado...")
-    print("=" * 60)
-
-    resultados = []
-
-    for ticker in tickers:
-        try:
-            loader = DataLoaderRefinado()
-            df_ohlc = loader.baixar_dados_yf(ticker, periodo="1y", intervalo="1d")  # Menos dados para velocidade
-
-            if len(df_ohlc) < 50:
-                continue
-
-            fe = FeatureEngineerRefinado()
-            X, y, precos = fe.preparar_dataset_classificacao(df_ohlc)
-
-            # Usar modelo pré-treinado ou treinar rápido
-            model = ClassificacaoFinalRefinado(n_features=15)
-            model.treinar(X, y, precos, n_splits=3, purge_days=1)
-
-            # Previsão
-            X_novo = X.tail(1)
-            resultado = model.prever_direcao(X_novo)
-
-            # Obter o último preço como float
-            ultimo_preco = float(df_ohlc['Close'].iloc[-1])
-
-            resultados.append({
-                'ticker': ticker,
-                'previsao': resultado['predicao'],
-                'probabilidade': resultado['probabilidade'],
-                'operar': resultado['should_operate'],
-                'ultimo_preco': ultimo_preco
-            })
-
-        except Exception as e:
-            print(f"⚠️  Erro em {ticker}: {e}")
-
-    # Exibir resultados
-    print("\n🎯 RECOMENDAÇÕES DE TRADING:")
-    print("=" * 60)
-    for res in resultados:
-        status = "✅ OPERAR" if res['operar'] else "⏸️ AGUARDAR"
-        direcao = "📈 ALTA" if res['previsao'] == 1 else "📉 BAIXA"
-        print(
-            f"{res['ticker']}: {status} | {direcao} | Prob: {res['probabilidade']:.3f} | Preço: R$ {res['ultimo_preco']:.2f}")
+# def monitorar_mercado():
+#     """Monitora múltiplos ativos em tempo real"""
+#     tickers = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "BBDC4.SA", "B3SA3.SA", "WEGE3.SA"]
+#
+#     print("📡 Iniciando monitoramento do mercado...")
+#     print("=" * 60)
+#
+#     resultados = []
+#
+#     for ticker in tickers:
+#         try:
+#             loader = DataLoaderRefinado()
+#             df_ohlc = loader.baixar_dados_yf(ticker, periodo="1y", intervalo="1d")  # Menos dados para velocidade
+#
+#             if len(df_ohlc) < 50:
+#                 continue
+#
+#             fe = FeatureEngineerRefinado()
+#             X, y, precos = fe.preparar_dataset_classificacao(df_ohlc)
+#
+#             # Usar modelo pré-treinado ou treinar rápido
+#             model = ClassificacaoFinalRefinado(n_features=15)
+#             model.treinar(X, y, precos, n_splits=3, purge_days=1)
+#
+#             # Previsão
+#             X_novo = X.tail(1)
+#             resultado = model.prever_direcao(X_novo)
+#
+#             # Obter o último preço como float
+#             ultimo_preco = float(df_ohlc['Close'].iloc[-1])
+#
+#             resultados.append({
+#                 'ticker': ticker,
+#                 'previsao': resultado['predicao'],
+#                 'probabilidade': resultado['probabilidade'],
+#                 'operar': resultado['should_operate'],
+#                 'ultimo_preco': ultimo_preco
+#             })
+#
+#         except Exception as e:
+#             print(f"⚠️  Erro em {ticker}: {e}")
+#
+#     # Exibir resultados
+#     print("\n🎯 RECOMENDAÇÕES DE TRADING:")
+#     print("=" * 60)
+#     for res in resultados:
+#         status = "✅ OPERAR" if res['operar'] else "⏸️ AGUARDAR"
+#         direcao = "📈 ALTA" if res['previsao'] == 1 else "📉 BAIXA"
+#         print(
+#             f"{res['ticker']}: {status} | {direcao} | Prob: {res['probabilidade']:.3f} | Preço: R$ {res['ultimo_preco']:.2f}")
 
 if __name__ == "__main__":
     main()
-    monitorar_mercado()
