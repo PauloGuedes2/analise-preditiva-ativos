@@ -1,103 +1,57 @@
+# risk_analyzer_refinado.py
+"""
+Backtest simples e métricas de risco
+- backtest_sinais: recebe df com 'preco','pred' (1 para comprar/short not supported here),
+  aplica lógica simples: ao sinal 1 -> entra long no fechamento e fecha no próximo dia (intraday simulado).
+- retorna métricas: retorno total, retorno anualizado aproximado, sharpe (uso desvio simples), max drawdown
+"""
+
 import numpy as np
-from sklearn.metrics import accuracy_score
+import pandas as pd
 
 
-class AnalisadorRisco:
-    """
-    Classe responsável por calcular métricas de risco e gerar sinais de trading.
-    
-    Esta classe fornece métodos estáticos para avaliar a performance de estratégias
-    de trading e gerar recomendações baseadas nas previsões do modelo.
-    """
-    
-    @staticmethod
-    def calcular_metricas_risco(y_teste, y_pred, retornos_teste):
+class RiskAnalyzerRefinado:
+    def __init__(self):
+        pass
+
+    def backtest_sinais(self, df_signals: pd.DataFrame, custo_por_trade_pct: float = 0.0005) -> dict:
         """
-        Calcula métricas abrangentes de risco e performance de trading.
-        
-        Args:
-            y_teste (array-like): Valores reais da direção do preço
-            y_pred (array-like): Previsões da direção do preço
-            retornos_teste (array-like): Retornos reais observados
-            
-        Returns:
-            dict: Dicionário com métricas de performance calculadas
+        df_signals: DataFrame com colunas ['preco','proba','pred'] index alinhado ao tempo
+        Estratégia: quando pred==1 -> entra long no preço de fechamento atual e fecha no próximo índice
+        Simples, instrutivo — adaptar para regras reais (stop, sl, target, posição size, etc.)
         """
-        resultados = {}
+        if len(df_signals) < 2:
+            return {'retorno_total': 0.0, 'trades': 0, 'sharpe': 0.0,
+                    'max_drawdown': 0.0, 'retorno_med_diario': 0.0}
 
-        # Acurácia das previsões
-        resultados['acuracia'] = accuracy_score(y_teste, y_pred)
-        
-        # Lucro total das operações previstas como alta
-        resultados['lucro_total'] = retornos_teste[y_pred == 1].sum()
-
-        # Sharpe Ratio (retorno ajustado ao risco)
-        retornos_excesso = retornos_teste - 0.0001  # Taxa livre de risco
-        resultados['sharpe_ratio'] = retornos_excesso.mean() / retornos_excesso.std() * np.sqrt(252)
-
-        # Drawdown máximo (maior perda acumulada)
-        retornos_acumulados = (1 + retornos_teste).cumprod()
-        pico = retornos_acumulados.expanding().max()
-        drawdown = (retornos_acumulados - pico) / pico
-        resultados['drawdown_maximo'] = drawdown.min()
-
-        # Taxa de acerto das operações
-        operacoes_vencedoras = retornos_teste[y_pred == 1] > 0
-        resultados['taxa_acerto'] = operacoes_vencedoras.mean() if len(operacoes_vencedoras) > 0 else 0
-
-        # Fator de lucro (lucro bruto / perda bruta)
-        lucro_bruto = retornos_teste[(y_pred == 1) & (retornos_teste > 0)].sum()
-        perda_bruta = abs(retornos_teste[(y_pred == 1) & (retornos_teste < 0)].sum())
-        resultados['fator_lucro'] = lucro_bruto / perda_bruta if perda_bruta > 0 else float('inf')
-
-        return resultados
-
-    @staticmethod
-    def gerar_sinais_trading(previsao):
-        """
-        Gera sinais de trading baseados na previsão do modelo.
-        
-        Args:
-            previsao (dict): Dicionário com previsão contendo direção, confiança e retorno esperado
-            
-        Returns:
-            list: Lista de strings com sinais e recomendações de trading
-        """
-        sinais = []
-
-        # Sinal de direção
-        if previsao['direction'] == 'ALTA':
-            sinais.append("📈 SINAL: COMPRA")
-        else:
-            sinais.append("📉 SINAL: VENDA")
-
-        # Força do sinal baseada na confiança
-        confianca = previsao['direction_confidence']
-        if confianca > 0.7:
-            sinais.append("💪 FORTE (Confiança > 70%)")
-        elif confianca > 0.6:
-            sinais.append("👍 MÉDIO (Confiança 60-70%)")
-        else:
-            sinais.append("⚠️  FRACO (Confiança < 60%)")
-
-        # Potencial de retorno
-        retorno_esperado = previsao['expected_return']
-        if retorno_esperado > 0.015:
-            sinais.append("🎯 ALTO POTENCIAL (Retorno > 1.5%)")
-        elif retorno_esperado > 0.005:
-            sinais.append("✅ OPERAR (Retorno 0.5-1.5%)")
-        elif retorno_esperado > -0.005:
-            sinais.append("⏸️  NEUTRO (Retorno -0.5% a 0.5%)")
-        else:
-            sinais.append("🚫 EVITAR (Retorno < -0.5%)")
-
-        # Recomendação de tamanho da posição
-        if confianca > 0.65 and abs(retorno_esperado) > 0.008:
-            tamanho_posicao = "Tamanho: NORMAL"
-        elif confianca > 0.75 and abs(retorno_esperado) > 0.015:
-            tamanho_posicao = "Tamanho: MAIOR"
-        else:
-            tamanho_posicao = "Tamanho: REDUZIDO"
-        sinais.append(tamanho_posicao)
-
-        return sinais
+        df = df_signals.reset_index(drop=True).copy()
+        n = len(df)
+        rets = []
+        trades = 0
+        for i in range(n - 1):
+            if df.loc[i, 'pred'] == 1:
+                preco_enter = df.loc[i, 'preco']
+                preco_exit = df.loc[i + 1, 'preco']  # close next day
+                ret = (preco_exit / preco_enter) - 1.0
+                # aplicar custo (enter + exit)
+                ret -= 2 * custo_por_trade_pct
+                rets.append(ret)
+                trades += 1
+        if len(rets) == 0:
+            return {'retorno_total': 0.0, 'trades': 0, 'sharpe': 0.0, 'max_drawdown': 0.0, 'retorno_med_diario': 0.0}
+        arr = np.array(rets)
+        retorno_total = np.prod(1 + arr) - 1
+        retorno_med_diario = np.mean(arr)
+        sharpe = (np.mean(arr) / (np.std(arr) + 1e-9)) * np.sqrt(252) if np.std(arr) > 0 else 0.0
+        # equity curve
+        equity = np.cumprod(1 + arr)
+        peak = np.maximum.accumulate(equity)
+        drawdowns = (equity - peak) / peak
+        max_draw = float(np.min(drawdowns))
+        return {
+            'retorno_total': float(retorno_total),
+            'trades': int(trades),
+            'sharpe': float(sharpe),
+            'max_drawdown': float(max_draw),
+            'retorno_med_diario': float(retorno_med_diario)
+        }

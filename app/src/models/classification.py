@@ -1,651 +1,510 @@
+# classificacao_final_refinado.py
 """
-🎯 MODELO DE CLASSIFICAÇÃO FINAL - FOCO EXCLUSIVO EM DIREÇÃO
-Implementação definitiva para prever APENAS direção (Alta/Baixa)
+Versão refinada do pipeline de classificação (PT-BR)
+- Expanding walk-forward com purge
+- Calibração de probabilidades
+- Stability selection por bootstrap
+- Threshold operacional derivado da validação
+- Correções para warnings do sklearn e pandas
 """
 
-from datetime import datetime, timedelta
+from typing import List, Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.preprocessing import StandardScaler
+
+from src.data.database_manager import DatabaseManagerRefinado
+from src.models.feature_engineer import FeatureEngineerRefinado
+from src.utils.risk_analyzer import RiskAnalyzerRefinado
 
 
-class ClassificacaoFinal:
-    """
-    Modelo FINAL focado EXCLUSIVAMENTE em classificação de direção
-    """
+class ClassificacaoFinalRefinado:
+    def __init__(self, n_features: int = 25, random_state: int = 42,
+                 confidence_operar: float = 0.60, otimizar_hiperparametros: bool = True):
 
-    def __init__(self, ticker, test_size=0.20):
-        self.ticker = ticker
-        self.models = {}
-        self.scalers = {}
-        self.feature_selector = None
-        self.is_trained = False
-        self.test_size = test_size  # Permite configurar split treino/teste
+        self.n_features = n_features
+        self.random_state = random_state
+        self.confidence_operar = confidence_operar
+        self.otimizar_hiperparametros = otimizar_hiperparametros
 
-        # Configurações otimizadas para estabilidade
-        self.confidence_threshold = 0.75  # Threshold conservador
-        self.n_features = 25  # Features balanceadas
-
-        # Pesos equilibrados para estabilidade
-        self.model_weights = {
-            'rf': 0.27,  # Random Forest
-            'gb': 0.26,  # Gradient Boosting
-            'lr': 0.25,  # Logistic Regression
-            'nn': 0.22  # Neural Network
+        self.base_models = {
+            'rf': RandomForestClassifier(n_estimators=300, n_jobs=-1, random_state=self.random_state),
+            'gb': GradientBoostingClassifier(n_estimators=200, random_state=self.random_state),
+            'lr': LogisticRegression(max_iter=1000, random_state=self.random_state),
+            'nn': MLPClassifier(hidden_layer_sizes=(30, 15), alpha=0.1, max_iter=1000,
+                                random_state=self.random_state, early_stopping=True)
         }
 
-        # Métricas para análise
-        self.ensemble_accuracy = 0
-        self.baseline_accuracy = 0
-        self.individual_accuracies = {}
-        self.high_confidence_coverage = 0
-
-        print(f"🎯 Modelo de Classificação inicializado para {ticker}")
-
-    def _create_optimized_models(self):
-        """Cria modelos otimizados para ALTA CONFIABILIDADE"""
-
-        # Random Forest - Configuração para alta precisão
-        self.models['rf'] = RandomForestClassifier(
-            n_estimators=800,  # Mais árvores para estabilidade
-            max_depth=15,  # Profundidade controlada
-            min_samples_split=10,  # Mais conservador
-            min_samples_leaf=5,  # Folhas maiores
-            max_features=0.7,  # Mais features por árvore
-            class_weight='balanced_subsample',  # Balanceamento por amostra
-            random_state=42,
-            n_jobs=-1,
-            bootstrap=True,
-            oob_score=True  # Out-of-bag score para validação
-        )
-
-        # Gradient Boosting - Configuração para alta confiança
-        self.models['gb'] = GradientBoostingClassifier(
-            n_estimators=500,  # Mais estimadores
-            max_depth=8,  # Profundidade moderada
-            learning_rate=0.02,  # Learning rate menor para estabilidade
-            subsample=0.8,  # Subsample para regularização
-            max_features=0.8,  # Mais features
-            min_samples_split=15,  # Mais conservador
-            min_samples_leaf=7,  # Folhas maiores
-            random_state=42,
-            validation_fraction=0.1,  # Validação interna
-            n_iter_no_change=50  # Early stopping
-        )
-
-        # Logistic Regression - Regularização otimizada
-        self.models['lr'] = LogisticRegression(
-            C=0.1,  # Regularização moderada
-            class_weight='balanced',
-            solver='saga',  # Solver mais robusto
-            penalty='elasticnet',  # Elastic net (L1 + L2)
-            l1_ratio=0.5,  # Balanço entre L1 e L2
-            random_state=42,
-            max_iter=3000,
-            tol=1e-6  # Tolerância menor para convergência
-        )
-
-        # Neural Network - Arquitetura otimizada para confiabilidade
-        self.models['nn'] = MLPClassifier(
-            hidden_layer_sizes=(200, 100, 50, 25),  # Arquitetura mais profunda
-            activation='tanh',  # Tanh para melhor gradiente
-            solver='lbfgs',  # LBFGS para datasets pequenos
-            alpha=0.01,  # Regularização mais forte
-            learning_rate='constant',  # Learning rate constante
-            learning_rate_init=0.001,
-            max_iter=2000,  # Mais iterações
-            random_state=42,
-            early_stopping=True,
-            validation_fraction=0.2,  # Mais dados para validação
-            n_iter_no_change=100,  # Paciência maior
-            tol=1e-6  # Tolerância menor
-        )
-
-        # Scalers específicos
-        self.scalers['rf'] = RobustScaler()
-        self.scalers['gb'] = RobustScaler()
-        self.scalers['lr'] = StandardScaler()
-        self.scalers['nn'] = StandardScaler()
-
-    def obter_dados_d1(self):
-        """Obtém dados até D-1 com 2 anos de histórico"""
-        try:
-            print(f"📊 Obtendo dados para {self.ticker} até D-1...")
-
-            ontem = datetime.now() - timedelta(days=1)
-            inicio = ontem - timedelta(days=730)
-
-            print(f"📅 Período: {inicio.strftime('%Y-%m-%d')} a {ontem.strftime('%Y-%m-%d')}")
-
-            stock = yf.Ticker(self.ticker)
-            dados = stock.history(start=inicio, end=ontem + timedelta(days=1))
-
-            if dados.empty:
-                print("❌ Sem dados disponíveis")
-                return None
-
-            # Garante que não há dados de hoje
-            hoje = datetime.now().date()
-            dados = dados[dados.index.date < hoje]
-
-            print(f"✅ {len(dados)} registros obtidos")
-            print(f"📈 Último preço: ${dados['Close'].iloc[-1]:.2f} em {dados.index[-1].strftime('%Y-%m-%d')}")
-
-            return dados
-
-        except Exception as e:
-            print(f"❌ Erro ao obter dados: {e}")
-            return None
-
-    def _create_classification_features(self, dados):
-        """Cria features otimizadas para classificação de direção"""
-
-        print("🔧 Criando features para classificação...")
-
-        # Features básicas de retorno
-        for periodo in [1, 2, 3, 5, 7, 10, 14, 21]:
-            dados[f'retorno_{periodo}d'] = dados['Close'].pct_change(periodo)
-
-        # Médias móveis e posições relativas
-        for periodo in [5, 10, 20, 50, 100, 200]:
-            dados[f'sma_{periodo}'] = dados['Close'].rolling(periodo).mean()
-            dados[f'pos_sma_{periodo}'] = (dados['Close'] / dados[f'sma_{periodo}'] - 1) * 100
-
-        # Razões de médias móveis (muito importantes para direção)
-        dados['razao_sma_5_20'] = dados['sma_5'] / dados['sma_20']
-        dados['razao_sma_10_50'] = dados['sma_10'] / dados['sma_50']
-        dados['razao_sma_20_100'] = dados['sma_20'] / dados['sma_100']
-        dados['razao_sma_50_200'] = dados['sma_50'] / dados['sma_200']
-
-        # Momentum multi-período
-        for periodo in [3, 7, 14, 21, 30]:
-            dados[f'momentum_{periodo}d'] = (dados['Close'] / dados['Close'].shift(periodo) - 1) * 100
-
-        # Volatilidade e regime de volatilidade
-        for periodo in [5, 10, 20, 50]:
-            dados[f'vol_{periodo}d'] = dados['retorno_1d'].rolling(periodo).std() * 100
-            dados[f'vol_regime_{periodo}'] = dados[f'vol_{periodo}d'] / dados[f'vol_{periodo}d'].rolling(periodo).mean()
-
-        # RSI multi-período
-        for periodo in [7, 14, 21, 30]:
-            delta = dados['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(periodo).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(periodo).mean()
-            rs = gain / loss
-            dados[f'rsi_{periodo}'] = 100 - (100 / (1 + rs))
-            dados[f'rsi_{periodo}_overbought'] = (dados[f'rsi_{periodo}'] > 70).astype(int)
-            dados[f'rsi_{periodo}_oversold'] = (dados[f'rsi_{periodo}'] < 30).astype(int)
-
-        # MACD e derivados
-        ema_12 = dados['Close'].ewm(span=12).mean()
-        ema_26 = dados['Close'].ewm(span=26).mean()
-        dados['macd'] = ema_12 - ema_26
-        dados['macd_signal'] = dados['macd'].ewm(span=9).mean()
-        dados['macd_histogram'] = dados['macd'] - dados['macd_signal']
-        dados['macd_bullish'] = (dados['macd'] > dados['macd_signal']).astype(int)
-        dados['macd_crossover'] = ((dados['macd'] > dados['macd_signal']) &
-                                   (dados['macd'].shift(1) <= dados['macd_signal'].shift(1))).astype(int)
-
-        # Volume e análise de volume
-        for periodo in [5, 10, 20, 50]:
-            dados[f'volume_sma_{periodo}'] = dados['Volume'].rolling(periodo).mean()
-            dados[f'volume_ratio_{periodo}'] = dados['Volume'] / dados[f'volume_sma_{periodo}']
-
-        dados['volume_price_trend'] = dados['Volume'] * dados['retorno_1d']
-        dados['volume_breakout'] = (dados['volume_ratio_20'] > 2.0).astype(int)
-
-        # Suporte e resistência
-        for periodo in [10, 20, 50]:
-            dados[f'high_{periodo}d'] = dados['High'].rolling(periodo).max()
-            dados[f'low_{periodo}d'] = dados['Low'].rolling(periodo).min()
-            dados[f'price_position_{periodo}'] = ((dados['Close'] - dados[f'low_{periodo}d']) /
-                                                  (dados[f'high_{periodo}d'] - dados[f'low_{periodo}d']))
-            dados[f'near_high_{periodo}'] = (dados[f'price_position_{periodo}'] > 0.8).astype(int)
-            dados[f'near_low_{periodo}'] = (dados[f'price_position_{periodo}'] < 0.2).astype(int)
-
-        # Padrões de velas
-        dados['body_size'] = abs(dados['Close'] - dados['Open']) / (dados['High'] - dados['Low'])
-        dados['upper_shadow'] = (dados['High'] - np.maximum(dados['Open'], dados['Close'])) / (
-                dados['High'] - dados['Low'])
-        dados['lower_shadow'] = (np.minimum(dados['Open'], dados['Close']) - dados['Low']) / (
-                dados['High'] - dados['Low'])
-        dados['doji'] = (dados['body_size'] < 0.1).astype(int)
-        dados['hammer'] = ((dados['lower_shadow'] > 0.6) & (dados['upper_shadow'] < 0.1)).astype(int)
-
-        # Tendências de múltiplos períodos
-        for periodo in [3, 5, 10, 20, 50]:
-            dados[f'trend_{periodo}d'] = (dados['Close'] > dados['Close'].shift(periodo)).astype(int)
-            dados[f'trend_strength_{periodo}'] = (dados['Close'] / dados['Close'].shift(periodo) - 1) * 100
-
-        # Features de aceleração
-        dados['price_acceleration'] = dados['retorno_1d'] - dados['retorno_1d'].shift(1)
-        dados['volume_acceleration'] = dados['volume_ratio_5'] - dados['volume_ratio_5'].shift(1)
-
-        print(
-            f"✅ Features criadas: {len([col for col in dados.columns if dados[col].dtype in ['float64', 'int64']])} numéricas")
-
-        return dados
-
-    def treinar(self, verbose=True):
-        """Treina o modelo de classificação"""
-
-        if verbose:
-            print(f"\n🎯 TREINAMENTO CLASSIFICAÇÃO FINAL - {self.ticker}")
-            print("=" * 70)
-
-        try:
-            # Obtém dados
-            dados = self.obter_dados_d1()
-            if dados is None:
-                return False
-
-            # Cria features
-            dados_features = self._create_classification_features(dados)
-
-            # Prepara dados
-            X, y = self._preparar_dados_classificacao(dados_features)
-
-            if len(X) < 200:
-                print("❌ Dados insuficientes para treinamento")
-                return False
-
-            print(f"📊 Dados preparados: {len(X)} amostras, {X.shape[1]} features")
-
-            # Divide dados usando test_size configurável
-            split_idx = int(len(X) * (1 - self.test_size))
-            X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-            y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-
-            # Armazena para análise
-            self.X_train, self.X_test = X_train, X_test
-            self.y_train, self.y_test = y_train, y_test
-
-            print(f"📈 Divisão: {len(X_train)} treino, {len(X_test)} teste")
-            print(f"📊 Distribuição treino: {y_train.mean():.1%} alta, {1 - y_train.mean():.1%} baixa")
-            print(f"📊 Distribuição teste: {y_test.mean():.1%} alta, {1 - y_test.mean():.1%} baixa")
-
-            # Cria modelos
-            self._create_optimized_models()
-
-            # Seleção de features ROBUSTA para alta confiabilidade
-            print(f"🔍 Selecionando top {self.n_features} features mais estáveis...")
-
-            # Salva features de treinamento para usar na previsão
-            self.training_features = X_train.columns.tolist()
-
-            X_train_selected, X_test_selected = self._select_robust_features(X_train, X_test, y_train)
-
-            # Treina cada modelo
-            model_scores = {}
-            for model_name in self.models.keys():
-                score = self._train_individual_model(model_name, X_train_selected, y_train)
-                model_scores[model_name] = score
-
-            # Ajusta pesos baseado na performance
-            self._adjust_weights(model_scores)
-
-            # Avalia ensemble
-            ensemble_score = self._evaluate_ensemble(X_test_selected, y_test)
-
-            # Análise de confiança
-            confidence_analysis = self._analyze_confidence(X_test_selected, y_test)
-
-            # Métricas finais
-            baseline = max(y_test.mean(), 1 - y_test.mean())
-            melhoria = ensemble_score - baseline
-
-            print(f"\n📊 RESULTADOS FINAIS:")
-            print(f"   🎯 Ensemble: {ensemble_score:.3f}")
-            print(f"   📊 Baseline: {baseline:.3f}")
-            print(f"   🚀 Melhoria: {melhoria:+.3f}")
-
-            for model_name, score in model_scores.items():
-                weight = self.model_weights[model_name]
-                print(f"   🤖 {model_name.upper()}: {score:.3f} (peso: {weight:.2f})")
-
-            print(f"   🎯 Alta confiança: {confidence_analysis['high_conf_accuracy']:.3f} "
-                  f"({confidence_analysis['high_conf_coverage']:.1%} cobertura)")
-
-            # Features mais importantes (usando Random Forest como referência)
-            rf_model = self.models['rf']
-            feature_importance = pd.Series(rf_model.feature_importances_, index=X_train_selected.columns)
-            top_features = feature_importance.nlargest(10)
-
-            print(f"\n🔍 TOP 10 FEATURES MAIS IMPORTANTES:")
-            for i, (feature, importance) in enumerate(top_features.items(), 1):
-                print(f"   {i:2d}. {feature} ({importance:.4f})")
-
-            self.is_trained = True
-            print("✅ Treinamento concluído com sucesso!")
-
-            return True
-
-        except Exception as e:
-            print(f"❌ Erro no treinamento: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-
-    def _preparar_dados_classificacao(self, dados):
-        """Prepara dados especificamente para classificação"""
-
-        # Seleciona apenas features numéricas
-        feature_cols = [col for col in dados.columns
-                        if col not in ['Date', 'ticker', 'data']
-                        and dados[col].dtype in ['float64', 'int64']]
-
-        X = dados[feature_cols].fillna(0)
-
-        # Target: direção do próximo dia (APENAS classificação)
-        y = (dados['Close'].shift(-1) > dados['Close']).astype(int)
-
-        # Remove última linha (sem target futuro)
-        X = X.iloc[:-1]
-        y = y.iloc[:-1]
-
-        # Remove NaN
-        mask = ~y.isna()
-        X = X[mask]
-        y = y[mask]
-
-        return X, y
-
-    def _train_individual_model(self, model_name, X_train, y_train):
-        """Treina modelo individual"""
-
-        print(f"🤖 Treinando {model_name.upper()}...")
-
-        # Aplica scaler
-        X_scaled = self.scalers[model_name].fit_transform(X_train)
-
-        # Treina modelo
-        self.models[model_name].fit(X_scaled, y_train)
-
-        # Validação cruzada temporal
-        tscv = TimeSeriesSplit(n_splits=3)
-        cv_scores = cross_val_score(
-            self.models[model_name], X_scaled, y_train,
-            cv=tscv, scoring='accuracy'
-        )
-
-        avg_score = cv_scores.mean()
-        print(f"   CV Accuracy: {avg_score:.3f} ± {cv_scores.std():.3f}")
-
-        return avg_score
-
-    def _adjust_weights(self, model_scores):
-        """Ajusta pesos baseado na performance"""
-
-        total_score = sum(model_scores.values())
-        if total_score > 0:
-            for model_name in self.model_weights.keys():
-                if model_name in model_scores:
-                    performance_weight = model_scores[model_name] / total_score
-                    original_weight = self.model_weights[model_name]
-                    self.model_weights[model_name] = 0.8 * performance_weight + 0.2 * original_weight
-
-        # Normaliza pesos
-        total_weight = sum(self.model_weights.values())
-        for model_name in self.model_weights.keys():
-            self.model_weights[model_name] /= total_weight
-
-    def _evaluate_ensemble(self, X_test, y_test):
-        """Avalia ensemble"""
-
-        ensemble_proba = np.zeros(len(X_test))
-
-        for model_name in self.models.keys():
-            X_scaled = self.scalers[model_name].transform(X_test)
-            proba = self.models[model_name].predict_proba(X_scaled)[:, 1]
-            ensemble_proba += proba * self.model_weights[model_name]
-
-        ensemble_pred = (ensemble_proba > 0.5).astype(int)
-        return accuracy_score(y_test, ensemble_pred)
-
-    def _analyze_confidence(self, X_test, y_test):
-        """Analisa confiança das previsões com método melhorado"""
-
-        ensemble_proba = np.zeros(len(X_test))
-        individual_probas = {}
-
-        for model_name in self.models.keys():
-            X_scaled = self.scalers[model_name].transform(X_test)
-            proba = self.models[model_name].predict_proba(X_scaled)[:, 1]
-            individual_probas[model_name] = proba
-            ensemble_proba += proba * self.model_weights[model_name]
-
-        # NOVO: Confiança baseada em consenso entre modelos + distância de 0.5
-        confidence = self._calculate_improved_confidence(individual_probas, ensemble_proba)
-
-        high_conf_mask = confidence > self.confidence_threshold
-
-        if high_conf_mask.sum() > 0:
-            ensemble_pred = (ensemble_proba > 0.5).astype(int)
-            high_conf_accuracy = accuracy_score(y_test[high_conf_mask], ensemble_pred[high_conf_mask])
-            high_conf_coverage = high_conf_mask.mean()
-        else:
-            high_conf_accuracy = 0
-            high_conf_coverage = 0
-
-        return {
-            'high_conf_accuracy': high_conf_accuracy,
-            'high_conf_coverage': high_conf_coverage,
-            'avg_confidence': confidence.mean()
+        self.scalers = {k: StandardScaler() for k in self.base_models.keys()}
+
+        self.modelos_treinados: Dict[str, Any] = {}
+        self.pesos_modelos: Dict[str, float] = {}
+        self.features_selecionadas: List[str] = []
+        self.threshold_operacional: float = 0.5
+        self.db = DatabaseManagerRefinado()
+        self.feature_engineer = FeatureEngineerRefinado()
+
+    def _otimizar_hiperparametros_modelo(self, modelo, X, y):
+        """Otimiza hiperparâmetros para cada modelo"""
+        from sklearn.model_selection import RandomizedSearchCV
+
+        param_grids = {
+            'rf': {
+                'n_estimators': [100, 200, 300],
+                'max_depth': [None, 10, 20],
+                'min_samples_split': [2, 5, 10]
+            },
+            'gb': {
+                'n_estimators': [100, 200],
+                'learning_rate': [0.01, 0.05, 0.1],
+                'max_depth': [3, 5, 7]
+            },
+            'lr': {
+                'C': [0.1, 1.0, 10.0],
+                'penalty': ['l2']
+            },
+            'nn': {
+                'hidden_layer_sizes': [(50,), (100,), (50, 30)],
+                'alpha': [0.0001, 0.001, 0.01],
+                'learning_rate_init': [0.001, 0.01]
+            }
         }
 
-    def _calculate_improved_confidence(self, individual_probas, ensemble_proba):
-        """Calcula confiança melhorada baseada em consenso e certeza"""
+        modelo_nome = None
+        for nome, mod in self.base_models.items():
+            if type(modelo) == type(mod):
+                modelo_nome = nome
+                break
 
-        # Converte probabilidades em decisões (0 ou 1)
-        decisions = {}
-        for model_name, probas in individual_probas.items():
-            decisions[model_name] = (probas > 0.5).astype(int)
+        if modelo_nome and modelo_nome in param_grids:
+            search = RandomizedSearchCV(
+                modelo, param_grids[modelo_nome], n_iter=10, cv=3,
+                scoring='accuracy', n_jobs=-1, random_state=self.random_state
+            )
+            search.fit(X, y)
+            return search.best_estimator_
 
-        # Calcula consenso (quantos modelos concordam)
-        decision_matrix = np.array(list(decisions.values()))
-        consensus = np.abs(decision_matrix.mean(axis=0) - 0.5) * 2  # 0 a 1
+        return modelo
 
-        # Calcula certeza (quão longe de 0.5 está o ensemble)
-        certainty = np.abs(ensemble_proba - 0.5) * 2  # 0 a 1
+    # ----------------------------
+    def _divisoes_expansivas(self, n_splits: int, purge_days: int, n_observacoes: int) -> List[
+        Tuple[np.ndarray, np.ndarray]]:
+        splits = []
+        if n_splits <= 0:
+            return splits
+        test_size = max(int(n_observacoes / (n_splits + 1)), 1)
+        for i in range(n_splits):
+            train_end = test_size * (i + 1)
+            test_start = train_end + purge_days
+            test_end = min(test_start + test_size, n_observacoes)
+            if test_start >= test_end:
+                continue
+            train_idx = np.arange(0, train_end)
+            test_idx = np.arange(test_start, test_end)
+            splits.append((train_idx, test_idx))
+        return splits
 
-        # Combina consenso e certeza (dando mais peso ao consenso)
-        confidence = 0.7 * consensus + 0.3 * certainty
+    # ----------------------------
+    def selecao_estavel(self, X: pd.DataFrame, y: pd.Series, n_boot: int = 100, proporcao_top: float = 0.2):
+        # Garantir que X tenha colunas simples
+        if isinstance(X.columns, pd.MultiIndex):
+            X.columns = X.columns.get_level_values(0)
 
-        return confidence
+        y = np.array(y).ravel()
+        y = y.astype(int)
 
-    def _select_robust_features(self, X_train, X_test, y_train):
-        """Seleciona features mais robustas combinando múltiplos métodos"""
-        from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classif
+        # Usar importância mutual + random forest
+        from sklearn.feature_selection import mutual_info_classif
         from sklearn.ensemble import RandomForestClassifier
 
-        # Método 1: Mutual Information
-        selector_mi = SelectKBest(score_func=mutual_info_classif, k=self.n_features * 2)
-        X_mi = selector_mi.fit_transform(X_train, y_train)
-        features_mi = set(X_train.columns[selector_mi.get_support()])
+        # Calcular mutual information
+        mi_scores = mutual_info_classif(X, y, random_state=self.random_state)
+        mi_series = pd.Series(mi_scores, index=X.columns)
 
-        # Método 2: F-score
-        selector_f = SelectKBest(score_func=f_classif, k=self.n_features * 2)
-        X_f = selector_f.fit_transform(X_train, y_train)
-        features_f = set(X_train.columns[selector_f.get_support()])
+        # Top features por MI
+        top_mi = mi_series.nlargest(15).index.tolist()
 
-        # Método 3: Random Forest Feature Importance
-        rf_temp = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-        rf_temp.fit(X_train, y_train)
-        feature_importance = pd.Series(rf_temp.feature_importances_, index=X_train.columns)
-        top_rf_features = set(feature_importance.nlargest(self.n_features * 2).index)
+        votes = {c: 0 for c in X.columns}
 
-        # Combina métodos: features que aparecem em pelo menos 2 dos 3 métodos
-        feature_votes = {}
-        for feature in X_train.columns:
-            votes = 0
-            if feature in features_mi: votes += 1
-            if feature in features_f: votes += 1
-            if feature in top_rf_features: votes += 1
-            feature_votes[feature] = votes
+        # Dar peso extra para features com alta MI
+        for feature in top_mi:
+            votes[feature] += 10
 
-        # Seleciona features com mais votos
-        selected_features = sorted(feature_votes.items(), key=lambda x: x[1], reverse=True)
-        final_features = [f[0] for f in selected_features[:self.n_features]]
+        # Bootstrap com Random Forest
+        n_keep = max(10, int(len(X.columns) * proporcao_top))
+        rng = np.random.RandomState(self.random_state)
 
-        # Salva features selecionadas e cria mapeamento
-        self.selected_features = final_features
-        self.feature_mapping = {i: feature for i, feature in enumerate(final_features)}
+        for i in range(n_boot):
+            idx = rng.choice(len(X), size=int(len(X) * 0.8), replace=True)
+            Xb = X.iloc[idx]
+            yb = y[idx]
 
-        # Não usa mais SelectKBest, apenas retorna as features selecionadas
-        return X_train[final_features], X_test[final_features]
+            rf = RandomForestClassifier(n_estimators=100, n_jobs=-1,
+                                        random_state=self.random_state + i)
+            rf.fit(Xb, yb)
 
-    def _proximo_dia_util(self):
-        """Calcula o próximo dia útil (segunda a sexta)"""
-        from datetime import datetime, timedelta
+            # Top features por importância
+            imp = pd.Series(rf.feature_importances_, index=X.columns)
+            top_features = imp.nlargest(n_keep).index
 
-        hoje = datetime.now()
-        proximo_dia = hoje + timedelta(days=1)
+            for f in top_features:
+                votes[f] += 1
 
-        # Se for sábado (5) ou domingo (6), pula para segunda
-        while proximo_dia.weekday() >= 5:  # 5=sábado, 6=domingo
-            proximo_dia += timedelta(days=1)
+        # Selecionar as melhores features
+        voted = sorted(votes.items(), key=lambda x: x[1], reverse=True)
+        selected = [k for k, v in voted[:self.n_features]]
 
-        return proximo_dia
+        print(f"🔍 Top 10 features selecionadas: {selected[:10]}")
+        print(f"📊 Scores das top 5: {[v for k, v in voted[:5]]}")
 
-    def _deve_fazer_previsao(self):
-        """Verifica se deve fazer previsão baseado no dia da semana"""
-        from datetime import datetime
+        self.features_selecionadas = selected
+        return selected
 
-        hoje = datetime.now()
-        dia_semana = hoje.weekday()  # 0=segunda, 6=domingo
+    # ----------------------------
+    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, n_splits: int = 4, purge_days: int = 1):
 
-        # Se for sábado ou domingo, mostrar previsão para segunda
-        if dia_semana >= 5:
-            return True, "Final de semana - Previsão para segunda-feira"
+        sel = self.selecao_estavel(X, y)
+        Xs = X[sel].reset_index(drop=True)
+        y = y.reset_index(drop=True)
+        precos = precos.reset_index(drop=True)
 
-        # Se for sexta, avisar que previsão é para segunda
-        if dia_semana == 4:  # sexta
-            return True, "Previsão para segunda-feira (próximo dia útil)"
+        splits = self._divisoes_expansivas(n_splits=n_splits, purge_days=purge_days,
+                                           n_observacoes=len(Xs))
+        if len(splits) == 0:
+            raise ValueError("Divisões insuficientes")
 
-        return True, "Previsão para próximo dia útil"
+        X_full = X.copy()
+        sel = self.selecao_estavel(X_full, y)
 
-    def prever_direcao(self):
-        """Faz previsão de direção para o próximo dia útil"""
+        Xs = X_full[sel].reset_index(drop=True)
+        y = y.reset_index(drop=True)
 
-        if not self.is_trained:
-            print("❌ Modelo não foi treinado ainda!")
-            return None
+        precos = precos.reset_index(drop=True)
 
-        # Verifica qual dia será a previsão
-        deve_prever, motivo = self._deve_fazer_previsao()
+        n_obs = len(Xs)
+        splits = self._divisoes_expansivas(n_splits=n_splits, purge_days=purge_days, n_observacoes=n_obs)
+        if len(splits) == 0:
+            raise ValueError("Número de observações insuficiente para as divisões expansivas solicitadas.")
+
+        cv_scores = {}
+        cv_stds = {}
+        for nome, modelo in self.base_models.items():
+            scores = []
+            for train_idx, test_idx in splits:
+                Xtr = Xs.iloc[train_idx]
+                ytr = y.iloc[train_idx]
+                Xte = Xs.iloc[test_idx]
+                yte = y.iloc[test_idx]
+
+                scaler = StandardScaler()
+                Xtr_s = scaler.fit_transform(Xtr)
+                Xte_s = scaler.transform(Xte)
+
+                ytr = np.array(ytr).ravel()
+                yte = np.array(yte).ravel()
+
+                m = modelo.__class__(**modelo.get_params())
+                if hasattr(m, 'random_state'):
+                    try:
+                        m.set_params(random_state=self.random_state)
+                    except Exception:
+                        pass
+                m.fit(Xtr_s, ytr)
+                preds = m.predict(Xte_s)
+                scores.append(accuracy_score(yte, preds))
+
+            if self.otimizar_hiperparametros:
+                m = self._otimizar_hiperparametros_modelo(m, Xtr_s, ytr)
+
+            cv_scores[nome] = float(np.mean(scores)) if scores else 0.0
+            cv_stds[nome] = float(np.std(scores)) if scores else 0.0
+
+            scaler_full = StandardScaler().fit(Xs)
+            Xs_s = scaler_full.transform(Xs)
+            y_full = np.array(y).ravel()
+            modelo.fit(Xs_s, y_full)
+
+            n_cal = max(50, int(len(Xs_s) * 0.15))  # Mais dados para calibração
+            if n_cal >= 50:  # Mínimo de 50 amostras
+                X_fit, X_cal = Xs_s[:-n_cal], Xs_s[-n_cal:]
+                y_fit, y_cal = y_full[:-n_cal], y_full[-n_cal:]
+
+                modelo.fit(X_fit, y_fit)
+
+                # Testar ambos os métodos de calibração
+                try:
+                    calibrated_sigmoid = CalibratedClassifierCV(modelo, method='sigmoid', cv='prefit')
+                    calibrated_sigmoid.fit(X_cal, y_cal)
+
+                    calibrated_isotonic = CalibratedClassifierCV(modelo, method='isotonic', cv='prefit')
+                    calibrated_isotonic.fit(X_cal, y_cal)
+
+                    # Escolher o melhor método
+                    proba_sigmoid = calibrated_sigmoid.predict_proba(X_cal)[:, 1]
+                    proba_isotonic = calibrated_isotonic.predict_proba(X_cal)[:, 1]
+
+                    score_sigmoid = brier_score_loss(y_cal, proba_sigmoid)
+                    score_isotonic = brier_score_loss(y_cal, proba_isotonic)
+
+                    self.modelos_treinados[
+                        nome] = calibrated_sigmoid if score_sigmoid < score_isotonic else calibrated_isotonic
+                except Exception as e:
+                    print(f"⚠️ Calibração falhou para {nome}: {e}")
+                    self.modelos_treinados[nome] = modelo
+            else:
+                self.modelos_treinados[nome] = modelo
+
+            self.scalers[nome] = scaler_full
+
+        self._ajustar_pesos_por_cv(cv_scores, cv_stds)
+
+        ultimo_train_idx, ultimo_test_idx = splits[-1]
+        X_hold = Xs.iloc[ultimo_test_idx]
+        y_hold = y.iloc[ultimo_test_idx]
+        precos_hold = precos.iloc[ultimo_test_idx]
+
+        self.calcular_threshold_operacional(X_hold, y_hold)
+
+        probas_ensemble = self._proba_ensemble(X_hold)
+        print(f"📊 Estatísticas das probabilidades:")
+        print(f"   Média: {probas_ensemble.mean():.3f}")
+        print(f"   Máxima: {probas_ensemble.max():.3f}")
+        print(f"   Mínima: {probas_ensemble.min():.3f}")
+        print(f"   % acima de 0.75: {(probas_ensemble > 0.75).mean():.1%}")
+
+        ra = RiskAnalyzerRefinado()
+        df_signals = self.prever_e_gerar_sinais(X_hold, precos_hold, retornar_dataframe=True)
+        backtest_metrics = ra.backtest_sinais(df_signals, custo_por_trade_pct=0.0005)
+
+        meta = {
+            'features': self.features_selecionadas,
+            'pesos': self.pesos_modelos,
+            'cv_scores': cv_scores,
+            'cv_stds': cv_stds,
+            'threshold_operacional': float(self.threshold_operacional),
+            'backtest': backtest_metrics
+        }
+        self.db.salvar_treino_metadata(meta)
+
+        probas_validacao = self._proba_ensemble(X_hold)
+        self.confidence_operar = max(self.calcular_limiar_confianca_auto(probas_validacao), 0.55)
+        print(f"🎯 Limiar de confiança automático: {self.confidence_operar:.3f}")
+
+        print("🧠 Treinando meta-modelo...")
 
         try:
-            print(f"\n🔮 PREVISÃO PARA {self.ticker} - PRÓXIMO DIA ÚTIL")
-            print("-" * 50)
+            probas_base = {}
+            for nome, modelo in self.modelos_treinados.items():
+                scaler = self.scalers[nome]
+                Xs_scaled = scaler.transform(X_hold)
+                probas_base[nome] = modelo.predict_proba(Xs_scaled)[:, 1]
 
-            if "segunda-feira" in motivo.lower():
-                print(f"📅 {motivo}")
-                print()
+            # Treinar meta-modelo (Stacking)
+            X_meta = np.column_stack(list(probas_base.values()))
+            meta_model = LogisticRegression(random_state=self.random_state)
+            meta_model.fit(X_meta, y_hold)
 
-            # Obtém dados atualizados
-            dados = self.obter_dados_d1()
-            if dados is None:
-                return None
-
-            # Cria features
-            dados_features = self._create_classification_features(dados)
-
-            # Prepara dados (só features, sem target)
-            feature_cols = [col for col in dados_features.columns
-                            if col not in ['Date', 'ticker', 'data']
-                            and dados_features[col].dtype in ['float64', 'int64']]
-
-            X = dados_features[feature_cols].fillna(0)
-
-            # Aplica seleção de features (garantindo mesmas features do treinamento)
-            if hasattr(self, 'selected_features'):
-                # Usa apenas as features que foram selecionadas no treinamento
-                # Adiciona features faltantes com valor 0
-                for feature in self.selected_features:
-                    if feature not in X.columns:
-                        X[feature] = 0
-
-                # Seleciona apenas as features treinadas
-                X_selected = X[self.selected_features]
-            else:
-                # Fallback: usa todas as features
-                X_selected = X
-
-            # Predições ensemble
-            ensemble_proba = 0
-            individual_probas = {}
-
-            for model_name in self.models.keys():
-                X_scaled = self.scalers[model_name].transform(X_selected)
-                proba = self.models[model_name].predict_proba(X_scaled)[-1, 1]
-
-                individual_probas[model_name] = proba
-                ensemble_proba += proba * self.model_weights[model_name]
-
-            # Decisão final
-            prediction = int(ensemble_proba > 0.5)
-
-            # NOVO: Usa cálculo melhorado de confiança
-            confidence = self._calculate_improved_confidence(
-                {k: np.array([v]) for k, v in individual_probas.items()},
-                np.array([ensemble_proba])
-            )[0]
-
-            should_trade = confidence > self.confidence_threshold
-
-            # Data da previsão (próximo dia útil)
-            proximo_dia_util = self._proximo_dia_util()
-            data_previsao = proximo_dia_util.strftime('%Y-%m-%d')
-            dia_semana_previsao = proximo_dia_util.strftime('%A')
-
-            # Traduz dia da semana
-            dias_pt = {
-                'Monday': 'Segunda-feira',
-                'Tuesday': 'Terça-feira',
-                'Wednesday': 'Quarta-feira',
-                'Thursday': 'Quinta-feira',
-                'Friday': 'Sexta-feira'
-            }
-            dia_pt = dias_pt.get(dia_semana_previsao, dia_semana_previsao)
-
-            # Resultado
-            resultado = {
-                'ticker': self.ticker,
-                'prediction': prediction,
-                'direction': 'ALTA' if prediction == 1 else 'BAIXA',
-                'probability': ensemble_proba,
-                'confidence': confidence,
-                'should_trade': should_trade,
-                'individual_probas': individual_probas,
-                'last_price': dados['Close'].iloc[-1],
-                'data_ultima': dados.index[-1].strftime('%Y-%m-%d'),
-                'data_previsao': data_previsao,
-                'dia_previsao': dia_pt
-            }
-
-            print(f"📊 Dados até: {resultado['data_ultima']}")
-            print(f"💰 Último preço: ${resultado['last_price']:.2f}")
-            print(f"📅 Previsão para: {resultado['data_previsao']} ({resultado['dia_previsao']})")
-            print(f"🎯 Previsão: {resultado['direction']}")
-            print(f"📊 Probabilidade: {resultado['probability']:.3f}")
-            print(f"🎯 Confiança: {resultado['confidence']:.3f}")
-            print(f"💡 Deve operar: {'✅ SIM' if resultado['should_trade'] else '❌ NÃO'}")
-
-            print(f"\n🤖 Detalhes por modelo:")
-            for model_name, proba in individual_probas.items():
-                weight = self.model_weights[model_name]
-                direction = 'ALTA' if proba > 0.5 else 'BAIXA'
-                print(f"   {model_name.upper()}: {direction} ({proba:.3f}) - peso: {weight:.2f}")
-
-            return resultado
-
+            self.meta_model = meta_model
+            print("✅ Meta-modelo treinado")
         except Exception as e:
-            print(f"❌ Erro na previsão: {e}")
-            return None
+            print(f"⚠️  Meta-modelo não pôde ser treinado: {e}")
+            self.meta_model = None
+
+        return meta
+
+    def _treinar_meta_modelo(self, X, y, previsoes_base):
+        from sklearn.linear_model import LogisticRegression
+
+        # Combinar previsões dos modelos base
+        X_meta = np.column_stack([previsoes_base[modelo] for modelo in previsoes_base])
+
+        meta_model = LogisticRegression()
+        meta_model.fit(X_meta, y)
+        return meta_model
+
+    def _ajustar_pesos_por_cv(self, cv_scores: Dict[str, float], cv_stds: Dict[str, float]):
+        nomes = list(self.base_models.keys())
+        scores = np.array([cv_scores.get(n, 0.0) for n in nomes], dtype=float)
+        stds = np.array([cv_stds.get(n, 1.0) for n in nomes], dtype=float)
+        penalized = scores - 0.5 * stds
+        penalized = np.clip(penalized, a_min=0.0001, a_max=None)
+        pesos = penalized / np.sum(penalized)
+        self.pesos_modelos = {n: float(p) for n, p in zip(nomes, pesos)}
+        return self.pesos_modelos
+
+    def calcular_threshold_operacional(self, X_hold: pd.DataFrame, y_hold: pd.Series, inicio: float = 0.45,
+                                       fim: float = 0.9, passos: int = 46):
+        if len(X_hold) == 0:
+            self.threshold_operacional = 0.5
+            return self.threshold_operacional
+        probas_ensemble = self._proba_ensemble(X_hold)
+        best_thr = 0.5
+        best_metric = -999
+        for thr in np.linspace(inicio, fim, passos):
+            preds = (probas_ensemble > thr).astype(int)
+            acc = accuracy_score(np.array(y_hold).ravel(), preds)
+            if acc > best_metric:
+                best_metric = acc
+                best_thr = thr
+        self.threshold_operacional = float(best_thr)
+        return self.threshold_operacional
+
+    def _proba_ensemble(self, X: pd.DataFrame) -> np.ndarray:
+        # Previsões dos modelos base
+        probas_base = {}
+        for nome, modelo in self.modelos_treinados.items():
+            scaler = self.scalers.get(nome, StandardScaler())
+            Xs = scaler.transform(X)
+            try:
+                p = modelo.predict_proba(Xs)[:, 1]
+            except Exception:
+                try:
+                    raw = modelo.decision_function(Xs)
+                    p = 1 / (1 + np.exp(-raw))
+                except Exception:
+                    p = np.zeros(len(Xs))
+            probas_base[nome] = p
+
+        # Usar meta-modelo se disponível
+        if hasattr(self, 'meta_model'):
+            X_meta = np.column_stack(list(probas_base.values()))
+            return self.meta_model.predict_proba(X_meta)[:, 1]
+        else:
+            # Fallback para média ponderada
+            probas = []
+            for nome, p in probas_base.items():
+                peso = self.pesos_modelos.get(nome, 0.25)
+                probas.append(p * peso)
+            return np.sum(np.vstack(probas), axis=0)
+
+    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, retornar_dataframe: bool = False):
+        Xs = X[self.features_selecionadas].reset_index(drop=True)
+        proba = np.array(self._proba_ensemble(Xs)).ravel()
+        pred = (proba > self.threshold_operacional).astype(int).ravel()
+
+        conf = proba
+        high_conf = np.mean(conf >= self.confidence_operar)
+        meta = {
+            'ultimo_preco': float(precos.iloc[-1].item()) if len(precos) else None,
+            'n_amostras': len(Xs),
+            'cobertura_alta_conf': float(high_conf),
+            'threshold_operacional': float(self.threshold_operacional)
+        }
+        self.db.salvar_previsao({
+            'predicao': int(pred[-1]) if len(pred) else None,
+            'probabilidade': float(proba[-1].item()) if len(proba) else None,
+            'metadados': meta
+        })
+        if retornar_dataframe:
+            df = pd.DataFrame({
+                'preco': precos.reset_index(drop=True).astype(float).to_numpy().ravel(),
+                'proba': proba.ravel(),
+                'pred': pred.ravel()
+            })
+            return df
+        return pred, proba
+
+    def calcular_limiar_confianca_auto(self, probas_validacao, y_true=None):
+        """Limiar dinâmico baseado na qualidade das previsões"""
+        base = np.percentile(probas_validacao, 65)  # Percentil 65
+
+        # Se tivermos labels verdadeiras, ajustar baseado na acurácia
+        if y_true is not None:
+            acc = accuracy_score(y_true, (probas_validacao > 0.5).astype(int))
+            if acc > 0.55:  # Se a acurácia for boa, podemos ser menos conservadores
+                base = np.percentile(probas_validacao, 60)
+            elif acc < 0.52:  # Se a acurácia for baixa, ser mais conservador
+                base = np.percentile(probas_validacao, 70)
+
+        # Limites mínimos e máximos
+        base = max(base, 0.55)  # Mínimo de 55%
+        base = min(base, 0.70)  # Máximo de 70%
+
+        return base
+
+    def _treinar_meta_modelo_avancado(self, X_hold, y_hold):
+        """Meta-modelo mais sofisticado"""
+        from sklearn.ensemble import GradientBoostingClassifier
+        from sklearn.neural_network import MLPClassifier
+
+        # Coletar previsões de todos os modelos
+        probas_base = {}
+        for nome, modelo in self.modelos_treinados.items():
+            scaler = self.scalers[nome]
+            Xs_scaled = scaler.transform(X_hold)
+            probas_base[nome] = modelo.predict_proba(Xs_scaled)[:, 1]
+
+        # Criar dataset meta
+        X_meta = np.column_stack(list(probas_base.values()))
+
+        # Adicionar features originais selecionadas
+        X_meta = np.hstack([X_meta, X_hold[self.features_selecionadas[:5]].values])
+
+        # Testar diferentes meta-modelos
+        models = {
+            'logistic': LogisticRegression(random_state=self.random_state),
+            'gb': GradientBoostingClassifier(random_state=self.random_state),
+            'nn': MLPClassifier(hidden_layer_sizes=(10, 5), random_state=self.random_state)
+        }
+
+        best_score = -1
+        best_model = None
+
+        for name, model in models.items():
+            try:
+                model.fit(X_meta, y_hold)
+                score = model.score(X_meta, y_hold)
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+            except:
+                continue
+
+        return best_model
+
+    def prever_direcao(self, X_novo: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Faz previsão para novos dados
+        Retorna: probabilidade, predição e se deve operar
+        """
+        if not hasattr(self, 'features_selecionadas') or not self.features_selecionadas:
+            raise ValueError("Modelo não foi treinado ainda. Chame o método treinar() primeiro.")
+
+        # Selecionar apenas as features usadas no treino
+        Xs = X_novo[self.features_selecionadas].reset_index(drop=True)
+
+        # Calcular probabilidades do ensemble
+        proba = np.array(self._proba_ensemble(Xs)).ravel()
+
+        # Fazer predição binária
+        pred = (proba > self.threshold_operacional).astype(int).ravel()
+
+        # Decidir se deve operar
+        should_operate = bool((proba[-1] >= self.confidence_operar) and (pred[-1] == 1))
+
+        resultado = {
+            'probabilidade': float(proba[-1].item()),
+            'predicao': int(pred[-1]),
+            'should_operate': should_operate,
+            'threshold_operacional': float(self.threshold_operacional),
+            'limiar_confianca': float(self.confidence_operar)
+        }
+
+        # Salvar no banco de dados
+        self.db.salvar_previsao({
+            'probabilidade': float(proba[-1].item()),
+            'predicao': int(pred[-1]),
+            'metadados': {
+                'should_operate': should_operate,
+                'threshold_operacional': self.threshold_operacional,
+                'limiar_confianca': self.confidence_operar
+            }
+        })
+
+        return resultado
