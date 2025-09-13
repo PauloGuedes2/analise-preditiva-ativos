@@ -3,7 +3,7 @@
 Testa o modelo definitivo focado EXCLUSIVAMENTE em classificação
 """
 
-from models.classificacao_final import ClassificacaoFinal
+from models.classification import ClassificacaoFinal
 
 
 def main():

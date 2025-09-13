@@ -6,7 +6,7 @@ Testa diferentes divisões treino/teste para encontrar o modelo mais confiável
 
 import warnings
 
-from models.classificacao_final import ClassificacaoFinal
+from models.classification import ClassificacaoFinal
 
 warnings.filterwarnings('ignore')
 

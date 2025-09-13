@@ -5,7 +5,7 @@ Modelo focado EXCLUSIVAMENTE em prever direção (Alta/Baixa) para o próximo di
 
 import warnings
 
-from src.models.classificacao_final import ClassificacaoFinal
+from src.models.classification import ClassificacaoFinal
 
 warnings.filterwarnings('ignore')
 
