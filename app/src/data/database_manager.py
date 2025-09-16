@@ -1,33 +1,42 @@
-"""
-Gerenciador SQLite simples para salvar metadados de treino e previsões.
-Arquivo: treino_metadata (json), previsoes (cada previsao com prob/pred/metadados)
-"""
-
 import json
 import sqlite3
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from contextlib import contextmanager
 
 
-class DatabaseManagerRefinado:
+class DatabaseManager:
+    """Gerencia operações de banco de dados SQLite para metadados do modelo."""
+
     def __init__(self, db_path: str = 'model_metadata.db'):
         self.db_path = db_path
         self._criar_tabelas()
 
-    def _con(self):
-        return sqlite3.connect(self.db_path)
+    @contextmanager
+    def _conexao(self):
+        """Context manager para gerenciar conexões com o banco."""
+        conexao = sqlite3.connect(self.db_path)
+        try:
+            yield conexao
+        finally:
+            conexao.close()
 
     def _criar_tabelas(self):
-        with self._con() as c:
-            cur = c.cursor()
-            cur.execute("""
+        """Cria tabelas necessárias se não existirem."""
+        with self._conexao() as conn:
+            cursor = conn.cursor()
+
+            # Tabela de metadados de treino
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS treino_metadata (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     criado_em TEXT,
                     metadata_json TEXT
                 )
             """)
-            cur.execute("""
+
+            # Tabela de previsões
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS previsoes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     criado_em TEXT,
@@ -36,22 +45,75 @@ class DatabaseManagerRefinado:
                     metadados_json TEXT
                 )
             """)
-            c.commit()
+
+            conn.commit()
+
+    @staticmethod
+    def _obter_timestamp_atual() -> str:
+        """Retorna timestamp atual em formato ISO."""
+        return datetime.utcnow().isoformat()
 
     def salvar_treino_metadata(self, metadata: Dict[str, Any]):
-        with self._con() as c:
-            cur = c.cursor()
-            cur.execute("INSERT INTO treino_metadata (criado_em, metadata_json) VALUES (?,?)",
-                        (datetime.utcnow().isoformat(), json.dumps(metadata)))
-            c.commit()
+        """Salva metadados de treino no banco."""
+        timestamp = self._obter_timestamp_atual()
+        metadata_json = json.dumps(metadata)
+
+        with self._conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO treino_metadata (criado_em, metadata_json) VALUES (?,?)",
+                (timestamp, metadata_json)
+            )
+            conn.commit()
 
     def salvar_previsao(self, dados: Dict[str, Any]):
-        criado = datetime.utcnow().isoformat()
-        pred = dados.get('predicao')
-        prob = dados.get('probabilidade')
-        meta = dados.get('metadados', {})
-        with self._con() as c:
-            cur = c.cursor()
-            cur.execute("INSERT INTO previsoes (criado_em, predicao, probabilidade, metadados_json) VALUES (?,?,?,?)",
-                        (criado, pred, prob, json.dumps(meta)))
-            c.commit()
+        """Salva dados de previsão no banco."""
+        timestamp = self._obter_timestamp_atual()
+        predicao = dados.get('predicao')
+        probabilidade = dados.get('probabilidade')
+        metadados = dados.get('metadados', {})
+        metadados_json = json.dumps(metadados)
+
+        with self._conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO previsoes 
+                   (criado_em, predicao, probabilidade, metadados_json) 
+                   VALUES (?,?,?,?)""",
+                (timestamp, predicao, probabilidade, metadados_json)
+            )
+            conn.commit()
+
+    def buscar_ultimo_treino(self) -> Optional[Dict[str, Any]]:
+        """Busca o último registro de treino do banco."""
+        with self._conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT metadata_json FROM treino_metadata ORDER BY id DESC LIMIT 1"
+            )
+            resultado = cursor.fetchone()
+
+            if resultado:
+                return json.loads(resultado[0])
+            return None
+
+    def buscar_previsoes_recentes(self, limite: int = 10) -> list:
+        """Busca as previsões mais recentes do banco."""
+        with self._conexao() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT criado_em, predicao, probabilidade, metadados_json 
+                   FROM previsoes ORDER BY id DESC LIMIT ?""",
+                (limite,)
+            )
+
+            resultados = []
+            for row in cursor.fetchall():
+                resultados.append({
+                    'criado_em': row[0],
+                    'predicao': row[1],
+                    'probabilidade': row[2],
+                    'metadados': json.loads(row[3])
+                })
+
+            return resultados

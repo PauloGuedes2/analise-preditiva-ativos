@@ -1,30 +1,23 @@
-# classificacao_final_refinado.py
-"""
-Versão refinada do pipeline de classificação (PT-BR)
-- Expanding walk-forward com purge
-- Calibração de probabilidades
-- Stability selection por bootstrap
-- Threshold operacional derivado da validação
-- Correções para warnings do sklearn e pandas
-"""
-
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
-from src.data.database_manager import DatabaseManagerRefinado
-from src.models.feature_engineer import FeatureEngineerRefinado
-from src.utils.risk_analyzer import RiskAnalyzerRefinado
+from src.data.database_manager import DatabaseManager
+from src.models.feature_engineer import FeatureEngineer
+from src.utils.risk_analyzer import RiskAnalyzer
 
 
-class ClassificacaoFinalRefinado:
+class ClassificadorTrading:
+    """Sistema de classificação para previsão de direção de preços."""
+
     def __init__(self, n_features: int = 25, random_state: int = 42,
                  confidence_operar: float = 0.60, otimizar_hiperparametros: bool = True):
 
@@ -33,28 +26,40 @@ class ClassificacaoFinalRefinado:
         self.confidence_operar = confidence_operar
         self.otimizar_hiperparametros = otimizar_hiperparametros
 
-        self.base_models = {
-            'rf': RandomForestClassifier(n_estimators=300, n_jobs=-1, random_state=self.random_state),
-            'gb': GradientBoostingClassifier(n_estimators=200, random_state=self.random_state),
-            'lr': LogisticRegression(max_iter=1000, random_state=self.random_state),
-            'nn': MLPClassifier(hidden_layer_sizes=(30, 15), alpha=0.1, max_iter=1000,
-                                random_state=self.random_state, early_stopping=True)
+        self._inicializar_modelos_base()
+        self._inicializar_utilitarios()
+
+    def _inicializar_modelos_base(self):
+        """Inicializa os modelos base do ensemble."""
+        self.modelos_base = {
+            'rf': RandomForestClassifier(n_estimators=300, n_jobs=-1,
+                                         random_state=self.random_state),
+            'gb': GradientBoostingClassifier(n_estimators=200,
+                                             random_state=self.random_state),
+            'lr': LogisticRegression(max_iter=1000,
+                                     random_state=self.random_state),
+            'nn': MLPClassifier(hidden_layer_sizes=(30, 15), alpha=0.1,
+                                max_iter=1000, random_state=self.random_state,
+                                early_stopping=True)
         }
 
-        self.scalers = {k: StandardScaler() for k in self.base_models.keys()}
+        self.scalers = {nome: StandardScaler() for nome in self.modelos_base.keys()}
+        self.modelos_treinados = {}
+        self.pesos_modelos = {}
 
-        self.modelos_treinados: Dict[str, Any] = {}
-        self.pesos_modelos: Dict[str, float] = {}
-        self.features_selecionadas: List[str] = []
-        self.threshold_operacional: float = 0.5
-        self.db = DatabaseManagerRefinado()
-        self.feature_engineer = FeatureEngineerRefinado()
+    def _inicializar_utilitarios(self):
+        """Inicializa utilitários auxiliares."""
+        self.db = DatabaseManager()
+        self.feature_engineer = FeatureEngineer()
+        self.features_selecionadas = []
+        self.threshold_operacional = 0.5
+        self.meta_modelo = None
 
-    def _otimizar_hiperparametros_modelo(self, modelo, X, y):
-        """Otimiza hiperparâmetros para cada modelo"""
+    def _otimizar_hiperparametros_modelo(self, modelo, X: np.ndarray, y: np.ndarray):
+        """Otimiza hiperparâmetros para um modelo específico."""
         from sklearn.model_selection import RandomizedSearchCV
 
-        param_grids = {
+        grades_parametros = {
             'rf': {
                 'n_estimators': [100, 200, 300],
                 'max_depth': [None, 10, 20],
@@ -76,415 +81,307 @@ class ClassificacaoFinalRefinado:
             }
         }
 
-        modelo_nome = None
-        for nome, mod in self.base_models.items():
-            if type(modelo) == type(mod):
-                modelo_nome = nome
-                break
+        nome_modelo = self._identificar_tipo_modelo(modelo)
 
-        if modelo_nome and modelo_nome in param_grids:
-            search = RandomizedSearchCV(
-                modelo, param_grids[modelo_nome], n_iter=10, cv=3,
+        if nome_modelo and nome_modelo in grades_parametros:
+            busca = RandomizedSearchCV(
+                modelo, grades_parametros[nome_modelo], n_iter=10, cv=3,
                 scoring='accuracy', n_jobs=-1, random_state=self.random_state
             )
-            search.fit(X, y)
-            return search.best_estimator_
+            busca.fit(X, y)
+            return busca.best_estimator_
 
         return modelo
 
-    # ----------------------------
-    def _divisoes_expansivas(self, n_splits: int, purge_days: int, n_observacoes: int) -> List[
-        Tuple[np.ndarray, np.ndarray]]:
-        splits = []
-        if n_splits <= 0:
-            return splits
-        test_size = max(int(n_observacoes / (n_splits + 1)), 1)
-        for i in range(n_splits):
-            train_end = test_size * (i + 1)
-            test_start = train_end + purge_days
-            test_end = min(test_start + test_size, n_observacoes)
-            if test_start >= test_end:
-                continue
-            train_idx = np.arange(0, train_end)
-            test_idx = np.arange(test_start, test_end)
-            splits.append((train_idx, test_idx))
-        return splits
+    def _identificar_tipo_modelo(self, modelo) -> Optional[str]:
+        """Identifica o tipo do modelo para otimização."""
+        for nome, modelo_base in self.modelos_base.items():
+            if type(modelo) == type(modelo_base):
+                return nome
+        return None
 
-    # ----------------------------
-    # TODO: voltar pra 100 nboot
-    def selecao_estavel(self, X: pd.DataFrame, y: pd.Series, n_boot: int = 100, proporcao_top: float = 0.2):
-        # Garantir que X tenha colunas simples
+    @staticmethod
+    def _criar_divisoes_temporais(n_observacoes: int, n_splits: int = 4,
+                                  purge_days: int = 1) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Cria divisões temporais para validação walk-forward."""
+        divisoes = []
+
+        if n_splits <= 0:
+            return divisoes
+
+        tamanho_teste = max(int(n_observacoes / (n_splits + 1)), 1)
+
+        for i in range(n_splits):
+            fim_treino = tamanho_teste * (i + 1)
+            inicio_teste = fim_treino + purge_days
+            fim_teste = min(inicio_teste + tamanho_teste, n_observacoes)
+
+            if inicio_teste >= fim_teste:
+                continue
+
+            indices_treino = np.arange(0, fim_treino)
+            indices_teste = np.arange(inicio_teste, fim_teste)
+
+            divisoes.append((indices_treino, indices_teste))
+
+        return divisoes
+
+    def selecionar_features_estaveis(self, X: pd.DataFrame, y: pd.Series,
+                                     n_bootstraps: int = 100, proporcao_top: float = 0.2) -> List[str]:
+        """Seleciona features usando método de estabilidade por bootstrap."""
+        # Garantir colunas simples
         if isinstance(X.columns, pd.MultiIndex):
             X.columns = X.columns.get_level_values(0)
 
-        y = np.array(y).ravel()
-        y = y.astype(int)
+        y = np.array(y).ravel().astype(int)
 
-        # Usar importância mutual + random forest
-        from sklearn.feature_selection import mutual_info_classif
-        from sklearn.ensemble import RandomForestClassifier
+        # Importância por informação mútua
+        scores_mi = mutual_info_classif(X, y, random_state=self.random_state)
+        serie_mi = pd.Series(scores_mi, index=X.columns)
+        top_mi = serie_mi.nlargest(15).index.tolist()
 
-        # Calcular mutual information
-        mi_scores = mutual_info_classif(X, y, random_state=self.random_state)
-        mi_series = pd.Series(mi_scores, index=X.columns)
+        # Sistema de votação
+        votos = {coluna: 0 for coluna in X.columns}
 
-        # Top features por MI
-        top_mi = mi_series.nlargest(15).index.tolist()
-
-        votes = {c: 0 for c in X.columns}
-
-        # Dar peso extra para features com alta MI
+        # Bonus para features com alta MI
         for feature in top_mi:
-            votes[feature] += 10
+            votos[feature] += 10
 
         # Bootstrap com Random Forest
-        n_keep = max(10, int(len(X.columns) * proporcao_top))
+        n_manter = max(10, int(len(X.columns) * proporcao_top))
         rng = np.random.RandomState(self.random_state)
 
-        for i in range(n_boot):
-            idx = rng.choice(len(X), size=int(len(X) * 0.8), replace=True)
-            Xb = X.iloc[idx]
-            yb = y[idx]
+        for i in range(n_bootstraps):
+            indices = rng.choice(len(X), size=int(len(X) * 0.8), replace=True)
+            X_bootstrap = X.iloc[indices]
+            y_bootstrap = y[indices]
 
             rf = RandomForestClassifier(n_estimators=100, n_jobs=-1,
                                         random_state=self.random_state + i)
-            rf.fit(Xb, yb)
+            rf.fit(X_bootstrap, y_bootstrap)
 
             # Top features por importância
-            imp = pd.Series(rf.feature_importances_, index=X.columns)
-            top_features = imp.nlargest(n_keep).index
+            importancia = pd.Series(rf.feature_importances_, index=X.columns)
+            top_features = importancia.nlargest(n_manter).index
 
-            for f in top_features:
-                votes[f] += 1
+            for feature in top_features:
+                votos[feature] += 1
 
-        # Selecionar as melhores features
-        voted = sorted(votes.items(), key=lambda x: x[1], reverse=True)
-        selected = [k for k, v in voted[:self.n_features]]
+        # Selecionar melhores features
+        features_ordenadas = sorted(votos.items(), key=lambda x: x[1], reverse=True)
+        selecionadas = [feature for feature, voto in features_ordenadas[:self.n_features]]
 
-        print(f"🔍 Top 10 features selecionadas: {selected[:10]}")
-        print(f"📊 Scores das top 5: {[v for k, v in voted[:5]]}")
+        print(f"🔍 Top 10 features selecionadas: {selecionadas[:10]}")
+        print(f"📊 Scores das top 5: {[voto for _, voto in features_ordenadas[:5]]}")
 
-        self.features_selecionadas = selected
-        return selected
+        return selecionadas
 
-    # ----------------------------
-    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, n_splits: int = 4, purge_days: int = 1):
-
-        sel = self.selecao_estavel(X, y)
-        Xs = X[sel].reset_index(drop=True)
+    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series,
+                n_splits: int = 4, purge_days: int = 2) -> Dict[str, Any]:
+        """Treina o sistema de classificação."""
+        # Seleção de features
+        self.features_selecionadas = self.selecionar_features_estaveis(X, y)
+        X_selecionado = X[self.features_selecionadas].reset_index(drop=True)
         y = y.reset_index(drop=True)
         precos = precos.reset_index(drop=True)
 
-        splits = self._divisoes_expansivas(n_splits=n_splits, purge_days=purge_days,
-                                           n_observacoes=len(Xs))
-        if len(splits) == 0:
-            raise ValueError("Divisões insuficientes")
+        # Divisões temporais
+        divisoes = self._criar_divisoes_temporais(len(X_selecionado), n_splits, purge_days)
 
-        X_full = X.copy()
-        sel = self.selecao_estavel(X_full, y)
+        if not divisoes:
+            raise ValueError("Divisões insuficientes para validação")
 
-        Xs = X_full[sel].reset_index(drop=True)
-        y = y.reset_index(drop=True)
+        # Treinamento dos modelos
+        scores_cv, stds_cv = self._treinar_modelos_cv(X_selecionado, y, divisoes)
+        self._ajustar_pesos_modelos(scores_cv, stds_cv)
 
-        precos = precos.reset_index(drop=True)
+        # Conjunto de holdout
+        indices_treino, indices_teste = divisoes[-1]
+        X_holdout = X_selecionado.iloc[indices_teste]
+        y_holdout = y.iloc[indices_teste]
+        precos_holdout = precos.iloc[indices_teste]
 
-        n_obs = len(Xs)
-        splits = self._divisoes_expansivas(n_splits=n_splits, purge_days=purge_days, n_observacoes=n_obs)
-        if len(splits) == 0:
-            raise ValueError("Número de observações insuficiente para as divisões expansivas solicitadas.")
+        # Calibrar threshold operacional
+        self.calibrar_threshold_operacional(X_holdout, y_holdout)
 
-        cv_scores = {}
-        cv_stds = {}
-        for nome, modelo in self.base_models.items():
-            scores = []
-            for train_idx, test_idx in splits:
-                Xtr = Xs.iloc[train_idx]
-                ytr = y.iloc[train_idx]
-                Xte = Xs.iloc[test_idx]
-                yte = y.iloc[test_idx]
+        # Avaliar performance
+        metricas = self._avaliar_performance(X_holdout, y_holdout, precos_holdout)
 
-                scaler = StandardScaler()
-                Xtr_s = scaler.fit_transform(Xtr)
-                Xte_s = scaler.transform(Xte)
+        # Treinar meta-modelo
+        self._treinar_meta_modelo(X_holdout, y_holdout)
 
-                ytr = np.array(ytr).ravel()
-                yte = np.array(yte).ravel()
-
-                m = modelo.__class__(**modelo.get_params())
-                if hasattr(m, 'random_state'):
-                    try:
-                        m.set_params(random_state=self.random_state)
-                    except Exception:
-                        pass
-                m.fit(Xtr_s, ytr)
-                preds = m.predict(Xte_s)
-                scores.append(accuracy_score(yte, preds))
-
-            if self.otimizar_hiperparametros:
-                m = self._otimizar_hiperparametros_modelo(m, Xtr_s, ytr)
-
-            cv_scores[nome] = float(np.mean(scores)) if scores else 0.0
-            cv_stds[nome] = float(np.std(scores)) if scores else 0.0
-
-            scaler_full = StandardScaler().fit(Xs)
-            Xs_s = scaler_full.transform(Xs)
-            y_full = np.array(y).ravel()
-            modelo.fit(Xs_s, y_full)
-
-            n_cal = max(50, int(len(Xs_s) * 0.15))  # Mais dados para calibração
-            if n_cal >= 50:  # Mínimo de 50 amostras
-                X_fit, X_cal = Xs_s[:-n_cal], Xs_s[-n_cal:]
-                y_fit, y_cal = y_full[:-n_cal], y_full[-n_cal:]
-
-                modelo.fit(X_fit, y_fit)
-
-                # Testar ambos os métodos de calibração
-                try:
-                    calibrated_sigmoid = CalibratedClassifierCV(modelo, method='sigmoid', cv='prefit')
-                    calibrated_sigmoid.fit(X_cal, y_cal)
-
-                    calibrated_isotonic = CalibratedClassifierCV(modelo, method='isotonic', cv='prefit')
-                    calibrated_isotonic.fit(X_cal, y_cal)
-
-                    # Escolher o melhor método
-                    proba_sigmoid = calibrated_sigmoid.predict_proba(X_cal)[:, 1]
-                    proba_isotonic = calibrated_isotonic.predict_proba(X_cal)[:, 1]
-
-                    score_sigmoid = brier_score_loss(y_cal, proba_sigmoid)
-                    score_isotonic = brier_score_loss(y_cal, proba_isotonic)
-
-                    self.modelos_treinados[
-                        nome] = calibrated_sigmoid if score_sigmoid < score_isotonic else calibrated_isotonic
-                except Exception as e:
-                    print(f"⚠️ Calibração falhou para {nome}: {e}")
-                    self.modelos_treinados[nome] = modelo
-            else:
-                self.modelos_treinados[nome] = modelo
-
-            self.scalers[nome] = scaler_full
-
-        self._ajustar_pesos_por_cv(cv_scores, cv_stds)
-
-        ultimo_train_idx, ultimo_test_idx = splits[-1]
-        X_hold = Xs.iloc[ultimo_test_idx]
-        y_hold = y.iloc[ultimo_test_idx]
-        precos_hold = precos.iloc[ultimo_test_idx]
-
-        self.calcular_threshold_operacional(X_hold, y_hold)
-
-        probas_ensemble = self._proba_ensemble(X_hold)
-        print(f"📊 Estatísticas das probabilidades:")
-        print(f"   Média: {probas_ensemble.mean():.3f}")
-        print(f"   Máxima: {probas_ensemble.max():.3f}")
-        print(f"   Mínima: {probas_ensemble.min():.3f}")
-        print(f"   % acima de 0.75: {(probas_ensemble > 0.75).mean():.1%}")
-
-        ra = RiskAnalyzerRefinado()
-        df_signals = self.prever_e_gerar_sinais(X_hold, precos_hold, retornar_dataframe=True)
-        backtest_metrics = ra.backtest_sinais(df_signals, custo_por_trade_pct=0.0005)
-
-        if 'equity_curve' in backtest_metrics and isinstance(backtest_metrics['equity_curve'], np.ndarray):
-            backtest_metrics['equity_curve'] = backtest_metrics['equity_curve'].tolist()
-
+        # Salvar metadados do treinamento
         meta = {
             'features': self.features_selecionadas,
             'pesos': self.pesos_modelos,
-            'cv_scores': cv_scores,
-            'cv_stds': cv_stds,
+            'cv_scores': scores_cv,
+            'cv_stds': stds_cv,
             'threshold_operacional': float(self.threshold_operacional),
-            'backtest': backtest_metrics
+            'backtest': metricas
         }
         self.db.salvar_treino_metadata(meta)
 
-        probas_validacao = self._proba_ensemble(X_hold)
-        self.confidence_operar = max(self.calcular_limiar_confianca_auto(probas_validacao), 0.55)
-        print(f"🎯 Limiar de confiança automático: {self.confidence_operar:.3f}")
+        return metricas
 
-        print("🧠 Treinando meta-modelo...")
+    def _treinar_modelos_cv(self, X: pd.DataFrame, y: pd.Series,
+                            divisoes: List[Tuple[np.ndarray, np.ndarray]]) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """Treina modelos com validação cruzada temporal."""
+        scores_cv = {}
+        stds_cv = {}
 
-        try:
-            probas_base = {}
-            for nome, modelo in self.modelos_treinados.items():
-                scaler = self.scalers[nome]
-                Xs_scaled = scaler.transform(X_hold)
-                probas_base[nome] = modelo.predict_proba(Xs_scaled)[:, 1]
+        for nome, modelo in self.modelos_base.items():
+            scores_modelo = []
 
-            # Treinar meta-modelo (Stacking)
-            X_meta = np.column_stack(list(probas_base.values()))
-            meta_model = LogisticRegression(random_state=self.random_state)
-            meta_model.fit(X_meta, y_hold)
+            for indices_treino, indices_teste in divisoes:
+                X_treino = X.iloc[indices_treino]
+                y_treino = y.iloc[indices_treino]
+                X_teste = X.iloc[indices_teste]
+                y_teste = y.iloc[indices_teste]
 
-            self.meta_model = meta_model
-            print("✅ Meta-modelo treinado")
-        except Exception as e:
-            print(f"⚠️  Meta-modelo não pôde ser treinado: {e}")
-            self.meta_model = None
+                # Escalar dados
+                self.scalers[nome].fit(X_treino)
+                X_treino_scaled = self.scalers[nome].transform(X_treino)
+                X_teste_scaled = self.scalers[nome].transform(X_teste)
 
-        return meta
+                # Otimizar hiperparâmetros se necessário
+                if self.otimizar_hiperparametros:
+                    modelo = self._otimizar_hiperparametros_modelo(modelo, X_treino_scaled, y_treino)
 
-    def _treinar_meta_modelo(self, X, y, previsoes_base):
-        from sklearn.linear_model import LogisticRegression
+                # Treinar e avaliar
+                modelo.fit(X_treino_scaled, y_treino)
+                preds = modelo.predict(X_teste_scaled)
+                score = accuracy_score(y_teste, preds)
+                scores_modelo.append(score)
 
-        # Combinar previsões dos modelos base
-        X_meta = np.column_stack([previsoes_base[modelo] for modelo in previsoes_base])
+            # Calibrar modelo final
+            X_scaled = self.scalers[nome].transform(X)
+            modelo_calibrado = CalibratedClassifierCV(modelo, cv='prefit', method='isotonic')
+            modelo_calibrado.fit(X_scaled, y)
 
-        meta_model = LogisticRegression()
-        meta_model.fit(X_meta, y)
-        return meta_model
+            self.modelos_treinados[nome] = modelo_calibrado
+            scores_cv[nome] = float(np.mean(scores_modelo))
+            stds_cv[nome] = float(np.std(scores_modelo))
 
-    def _ajustar_pesos_por_cv(self, cv_scores: Dict[str, float], cv_stds: Dict[str, float]):
-        nomes = list(self.base_models.keys())
-        scores = np.array([cv_scores.get(n, 0.0) for n in nomes], dtype=float)
-        stds = np.array([cv_stds.get(n, 1.0) for n in nomes], dtype=float)
-        penalized = scores - 0.5 * stds
-        penalized = np.clip(penalized, a_min=0.0001, a_max=None)
-        pesos = penalized / np.sum(penalized)
-        self.pesos_modelos = {n: float(p) for n, p in zip(nomes, pesos)}
-        return self.pesos_modelos
+        return scores_cv, stds_cv
 
-    def calcular_threshold_operacional(self, X_hold: pd.DataFrame, y_hold: pd.Series, inicio: float = 0.45,
-                                       fim: float = 0.9, passos: int = 46):
-        if len(X_hold) == 0:
-            self.threshold_operacional = 0.5
-            return self.threshold_operacional
-        probas_ensemble = self._proba_ensemble(X_hold)
-        best_thr = 0.5
-        best_metric = -999
-        for thr in np.linspace(inicio, fim, passos):
-            preds = (probas_ensemble > thr).astype(int)
-            acc = accuracy_score(np.array(y_hold).ravel(), preds)
-            if acc > best_metric:
-                best_metric = acc
-                best_thr = thr
-        self.threshold_operacional = float(best_thr)
-        return self.threshold_operacional
+    def _ajustar_pesos_modelos(self, scores_cv: Dict[str, float], stds_cv: Dict[str, float]):
+        """Ajusta pesos dos modelos baseados na performance CV."""
+        for nome, score in scores_cv.items():
+            # Penalizar alta variabilidade
+            penalidade_std = max(0, 1 - (stds_cv[nome] / 0.1))
+            self.pesos_modelos[nome] = score * penalidade_std
 
-    def _proba_ensemble(self, X: pd.DataFrame) -> np.ndarray:
-        # Previsões dos modelos base
-        probas_base = {}
-        for nome, modelo in self.modelos_treinados.items():
-            scaler = self.scalers.get(nome, StandardScaler())
-            Xs = scaler.transform(X)
-            try:
-                p = modelo.predict_proba(Xs)[:, 1]
-            except Exception:
-                try:
-                    raw = modelo.decision_function(Xs)
-                    p = 1 / (1 + np.exp(-raw))
-                except Exception:
-                    p = np.zeros(len(Xs))
-            probas_base[nome] = p
-
-        # Usar meta-modelo se disponível
-        if hasattr(self, 'meta_model'):
-            X_meta = np.column_stack(list(probas_base.values()))
-            return self.meta_model.predict_proba(X_meta)[:, 1]
+        # Normalizar pesos
+        total = sum(self.pesos_modelos.values())
+        if total > 0:
+            for nome in self.pesos_modelos:
+                self.pesos_modelos[nome] /= total
         else:
-            # Fallback para média ponderada
-            probas = []
-            for nome, p in probas_base.items():
-                peso = self.pesos_modelos.get(nome, 0.25)
-                probas.append(p * peso)
-            return np.sum(np.vstack(probas), axis=0)
+            # Distribuição uniforme se todos zero
+            for nome in self.pesos_modelos:
+                self.pesos_modelos[nome] = 1.0 / len(self.pesos_modelos)
 
-    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, retornar_dataframe: bool = False):
-        Xs = X[self.features_selecionadas].reset_index(drop=True)
-        proba = np.array(self._proba_ensemble(Xs)).ravel()
-        pred = (proba > self.threshold_operacional).astype(int).ravel()
+    def calibrar_threshold_operacional(self, X: pd.DataFrame, y: pd.Series):
+        """Calibra threshold operacional baseado em Brier Score."""
+        probas = self.predict_proba(X)
+        brier_scores = []
+        thresholds = np.linspace(0.4, 0.6, 21)
 
-        conf = proba
-        high_conf = np.mean(conf >= self.confidence_operar)
-        meta = {
-            'ultimo_preco': float(precos.iloc[-1].item()) if len(precos) else None,
-            'n_amostras': len(Xs),
-            'cobertura_alta_conf': float(high_conf),
-            'threshold_operacional': float(self.threshold_operacional)
-        }
-        self.db.salvar_previsao({
-            'predicao': int(pred[-1]) if len(pred) else None,
-            'probabilidade': float(proba[-1].item()) if len(proba) else None,
-            'metadados': meta
-        })
-        if retornar_dataframe:
-            df = pd.DataFrame({
-                'preco': precos.reset_index(drop=True).astype(float).to_numpy().ravel(),
-                'proba': proba.ravel(),
-                'pred': pred.ravel()
-            })
-            return df
-        return pred, proba
+        for threshold in thresholds:
+            preds_binarias = (probas > threshold).astype(int)
+            brier_scores.append(brier_score_loss(y, probas))
 
-    def calcular_limiar_confianca_auto(self, probas_validacao, y_true=None):
-        """Limiar dinâmico baseado na qualidade das previsões"""
-        base = np.percentile(probas_validacao, 65)  # Percentil 65
+        melhor_threshold = thresholds[np.argmin(brier_scores)]
+        self.threshold_operacional = melhor_threshold
 
-        # Se tivermos labels verdadeiras, ajustar baseado na acurácia
-        if y_true is not None:
-            acc = accuracy_score(y_true, (probas_validacao > 0.5).astype(int))
-            if acc > 0.55:  # Se a acurácia for boa, podemos ser menos conservadores
-                base = np.percentile(probas_validacao, 60)
-            elif acc < 0.52:  # Se a acurácia for baixa, ser mais conservador
-                base = np.percentile(probas_validacao, 70)
+        print(f"🎯 Threshold operacional calibrado: {melhor_threshold:.3f}")
 
-        # Limites mínimos e máximos
-        base = max(base, 0.55)  # Mínimo de 55%
-        base = min(base, 0.70)  # Máximo de 70%
+    def _treinar_meta_modelo(self, X: pd.DataFrame, y: pd.Series):
+        """Treina meta-modelo para combinar previsões."""
+        probas_modelos = self._obter_probas_modelos(X)
 
-        return base
+        self.meta_modelo = LogisticRegression(random_state=self.random_state)
+        self.meta_modelo.fit(probas_modelos, y)
 
-    def _treinar_meta_modelo_avancado(self, X_hold, y_hold):
-        """Meta-modelo mais sofisticado"""
-        from sklearn.ensemble import GradientBoostingClassifier
-        from sklearn.neural_network import MLPClassifier
+    def _obter_probas_modelos(self, X: pd.DataFrame) -> np.ndarray:
+        """Obtém probabilidades de todos os modelos."""
+        probas_modelos = []
 
-        # Coletar previsões de todos os modelos
-        probas_base = {}
         for nome, modelo in self.modelos_treinados.items():
-            scaler = self.scalers[nome]
-            Xs_scaled = scaler.transform(X_hold)
-            probas_base[nome] = modelo.predict_proba(Xs_scaled)[:, 1]
+            X_scaled = self.scalers[nome].transform(X)
+            proba = modelo.predict_proba(X_scaled)[:, 1]
+            probas_modelos.append(proba)
 
-        # Criar dataset meta
-        X_meta = np.column_stack(list(probas_base.values()))
+        return np.column_stack(probas_modelos)
 
-        # Adicionar features originais selecionadas
-        X_meta = np.hstack([X_meta, X_hold[self.features_selecionadas[:5]].values])
+    def _avaliar_performance(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series) -> Dict[str, Any]:
+        """Avalia performance do modelo no conjunto de holdout."""
+        probas = self.predict_proba(X)
+        preds = (probas > self.threshold_operacional).astype(int)
 
-        # Testar diferentes meta-modelos
-        models = {
-            'logistic': LogisticRegression(random_state=self.random_state),
-            'gb': GradientBoostingClassifier(random_state=self.random_state),
-            'nn': MLPClassifier(hidden_layer_sizes=(10, 5), random_state=self.random_state)
+        # Métricas básicas
+        acuracia = accuracy_score(y, preds)
+        precisao = np.mean(preds == 1) if np.any(preds == 1) else 0
+
+        # Backtest
+        df_sinais = pd.DataFrame({
+            'preco': precos.values,
+            'proba': probas,
+            'pred': preds
+        })
+
+        risk_analyzer = RiskAnalyzer()
+        metricas_risco = risk_analyzer.backtest_sinais(df_sinais)
+
+        return {
+            'acuracia': acuracia,
+            'precisao': precisao,
+            'trades': metricas_risco['trades'],
+            'retorno_total': metricas_risco['retorno_total'],
+            'sharpe': metricas_risco['sharpe'],
+            'max_drawdown': metricas_risco['max_drawdown'],
+            'brier_score': brier_score_loss(y, probas)
         }
 
-        best_score = -1
-        best_model = None
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """Prediz probabilidades usando ensemble ponderado."""
+        if not self.modelos_treinados:
+            raise ValueError("Modelos não treinados. Execute treinar() primeiro.")
 
-        for name, model in models.items():
-            try:
-                model.fit(X_meta, y_hold)
-                score = model.score(X_meta, y_hold)
-                if score > best_score:
-                    best_score = score
-                    best_model = model
-            except:
-                continue
+        X_selecionado = X[self.features_selecionadas]
+        probas_modelos = self._obter_probas_modelos(X_selecionado)
 
-        return best_model
+        if self.meta_modelo:
+            return self.meta_modelo.predict_proba(probas_modelos)[:, 1]
+        else:
+            # Combinação linear ponderada
+            proba_final = np.zeros(len(X_selecionado))
+
+            for nome, peso in self.pesos_modelos.items():
+                X_scaled = self.scalers[nome].transform(X_selecionado)
+                proba = self.modelos_treinados[nome].predict_proba(X_scaled)[:, 1]
+                proba_final += peso * proba
+
+            return proba_final
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Prediz classes usando threshold operacional."""
+        probas = self.predict_proba(X)
+        return (probas > self.threshold_operacional).astype(int)
 
     def prever_direcao(self, X_novo: pd.DataFrame) -> Dict[str, Any]:
         """
-        Faz previsão para novos dados
-        Retorna: probabilidade, predição e se deve operar
+        Faz previsão para novos dados.
+        Retorna: probabilidade, predição e se deve operar.
         """
         if not hasattr(self, 'features_selecionadas') or not self.features_selecionadas:
             raise ValueError("Modelo não foi treinado ainda. Chame o método treinar() primeiro.")
 
         # Selecionar apenas as features usadas no treino
-        Xs = X_novo[self.features_selecionadas].reset_index(drop=True)
+        X_selecionado = X_novo[self.features_selecionadas].reset_index(drop=True)
 
         # Calcular probabilidades do ensemble
-        proba = np.array(self._proba_ensemble(Xs)).ravel()
+        proba = np.array(self.predict_proba(X_selecionado)).ravel()
 
         # Fazer predição binária
         pred = (proba > self.threshold_operacional).astype(int).ravel()
@@ -512,3 +409,63 @@ class ClassificacaoFinalRefinado:
         })
 
         return resultado
+
+    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series,
+                              retornar_dataframe: bool = False) -> Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Gera sinais de trading baseados nas previsões do modelo.
+
+        Args:
+            X: DataFrame com features
+            precos: Série com preços correspondentes
+            retornar_dataframe: Se True, retorna DataFrame com sinais
+
+        Returns:
+            DataFrame com sinais ou tupla com predições e probabilidades
+        """
+        X_selecionado = X[self.features_selecionadas].reset_index(drop=True)
+        proba = np.array(self.predict_proba(X_selecionado)).ravel()
+        pred = (proba > self.threshold_operacional).astype(int).ravel()
+
+        conf = proba
+        high_conf = np.mean(conf >= self.confidence_operar)
+
+        meta = {
+            'ultimo_preco': float(precos.iloc[-1].item()) if len(precos) else None,
+            'n_amostras': len(X_selecionado),
+            'cobertura_alta_conf': float(high_conf),
+            'threshold_operacional': float(self.threshold_operacional)
+        }
+
+        self.db.salvar_previsao({
+            'predicao': int(pred[-1]) if len(pred) else None,
+            'probabilidade': float(proba[-1].item()) if len(proba) else None,
+            'metadados': meta
+        })
+
+        if retornar_dataframe:
+            df = pd.DataFrame({
+                'preco': precos.reset_index(drop=True).astype(float).to_numpy().ravel(),
+                'proba': proba.ravel(),
+                'pred': pred.ravel()
+            })
+            return df
+
+        return pred, proba
+
+    def operar(self, X: pd.DataFrame) -> Tuple[int, float]:
+        """Decide se deve operar baseado na confiança da previsão."""
+        proba = self.predict_proba(X)
+
+        if len(proba) == 0:
+            return 0, 0.0
+
+        proba_final = proba[0]
+
+        if abs(proba_final - 0.5) < (self.confidence_operar - 0.5):
+            # Confiança insuficiente
+            return 0, proba_final
+        else:
+            # Operar com direção baseada no threshold
+            direcao = 1 if proba_final > self.threshold_operacional else -1
+            return direcao, proba_final
