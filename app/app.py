@@ -51,8 +51,43 @@ if analisar_btn:
             df_ticker, df_ibov = loader.baixar_dados_yf(ticker_selecionado, periodo="3y")
             X_full, y_full, precos_full = fe.preparar_dataset_classificacao(df_ticker, df_ibov)
 
+<<<<<<< Updated upstream
             X_novo = X_full.tail(1)
             previsao = modelo.prever_direcao(X_novo)
+=======
+    @staticmethod
+    @st.cache_resource
+    def _carregar_modelo(ticker: str) -> Optional[Any]:
+        """
+        Carrega modelo pré-treinado do disco.
+
+        Args:
+            ticker: Símbolo do ativo
+
+        Returns:
+            Modelo carregado ou None se não encontrado
+        """
+        caminho_modelo = f"C:/Users/valer/Documents/Pos/tech3/app/modelos_treinados/modelo_{ticker}.joblib"
+
+        if os.path.exists(caminho_modelo):
+            try:
+                return load(caminho_modelo)
+            except Exception as e:
+                st.error(f"Erro ao carregar modelo: {e}")
+                return None
+        return None
+
+    def _exibir_cabecalho(self):
+        """Exibe cabeçalho da página."""
+        st.title("📈 Dashboard de Análise Preditiva com Machine Learning")
+        st.markdown(f"**Analisando o ativo:** `{self.ticker_selecionado}`")
+        st.divider()
+
+    @staticmethod
+    def _exibir_previsao(previsao: Dict[str, Any]):
+        """Exibe resultados da previsão."""
+        st.header("🎯 Previsão para o Próximo Dia de Pregão")
+>>>>>>> Stashed changes
 
         st.header("Previsão para o Próximo Dia de Pregão")
         col1, col2, col3 = st.columns(3)
