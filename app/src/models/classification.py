@@ -18,6 +18,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
+import xgboost as xgb
+import lightgbm as lgb
 
 from src.data.database_manager import DatabaseManagerRefinado
 from src.models.feature_engineer import FeatureEngineerRefinado
@@ -33,6 +35,7 @@ class ClassificacaoFinalRefinado:
         self.confidence_operar = confidence_operar
         self.otimizar_hiperparametros = otimizar_hiperparametros
 
+<<<<<<< Updated upstream
         self.base_models = {
             'rf': RandomForestClassifier(n_estimators=300, n_jobs=-1, random_state=self.random_state),
             'gb': GradientBoostingClassifier(n_estimators=200, random_state=self.random_state),
@@ -40,6 +43,22 @@ class ClassificacaoFinalRefinado:
             'nn': MLPClassifier(hidden_layer_sizes=(30, 15), alpha=0.1, max_iter=1000,
                                 random_state=self.random_state, early_stopping=True)
         }
+=======
+        self._inicializar_modelos_base()
+        self._inicializar_utilitarios()
+
+
+    def _inicializar_modelos_base(self):
+        """Inicializa os modelos base do ensemble."""
+        self.modelos_base = {
+            'rf': RandomForestClassifier(n_estimators=300, n_jobs=-1, random_state=self.random_state),
+            'gb': GradientBoostingClassifier(n_estimators=200, random_state=self.random_state),
+            'xgb': xgb.XGBClassifier(n_estimators=200, use_label_encoder=False, eval_metric='logloss', random_state=self.random_state),
+            'lgbm': lgb.LGBMClassifier(n_estimators=200, random_state=self.random_state),
+            'lr': LogisticRegression(max_iter=1000, random_state=self.random_state),
+            'nn': MLPClassifier(hidden_layer_sizes=(30, 15), alpha=0.1, max_iter=1000, random_state=self.random_state, early_stopping=True)
+            }
+>>>>>>> Stashed changes
 
         self.scalers = {k: StandardScaler() for k in self.base_models.keys()}
 
