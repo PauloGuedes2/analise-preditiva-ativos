@@ -314,11 +314,5 @@ class DashboardTrading:
         self._exibir_explicabilidade(modelo)
 
 
-def main():
-    """Função principal da aplicação."""
-    dashboard = DashboardTrading()
-    dashboard.executar_analise()
-
-
-if __name__ == "__main__":
-    main()
+dashboard = DashboardTrading()
+dashboard.executar_analise()
