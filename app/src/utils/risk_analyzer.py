@@ -3,12 +3,17 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
+from src.config.params import Params
+from src.logger.logger import logger
+from src.utils.financial_calculation import CalculosEstatisticos
+
 
 class RiskAnalyzer:
     """Realiza análise de risco e backtesting de estratégias."""
 
-    def __init__(self, custo_por_trade_pct: float = 0.0005):
-        self.custo_por_trade_pct = custo_por_trade_pct
+    def __init__(self, custo_por_trade_pct: float = None):
+        self.custo_por_trade_pct = custo_por_trade_pct or Params.CUSTO_POR_TRADE_PCT
+        self.calculos = CalculosEstatisticos()
 
     def _calcular_retornos(self, df_sinais: pd.DataFrame) -> np.ndarray:
         """Calcula retornos individuais dos trades."""
@@ -27,35 +32,9 @@ class RiskAnalyzer:
 
         return np.array(retornos)
 
-    @staticmethod
-    def _calcular_curva_equidade(retornos: np.ndarray) -> np.ndarray:
-        """Calcula a curva de equidade."""
-        return np.cumprod(1 + retornos)
-
-    @staticmethod
-    def _calcular_drawdown(curva_equidade: np.ndarray) -> float:
-        """Calcula o máximo drawdown."""
-        pico = np.maximum.accumulate(curva_equidade)
-        drawdowns = (curva_equidade - pico) / pico
-        return float(np.min(drawdowns))
-
-    @staticmethod
-    def _calcular_sharpe_ratio(retornos: np.ndarray) -> float:
-        """Calcula o Sharpe Ratio anualizado."""
-        if len(retornos) == 0 or np.std(retornos) == 0:
-            return 0.0
-
-        return (np.mean(retornos) / np.std(retornos)) * np.sqrt(252)
-
     def backtest_sinais(self, df_sinais: pd.DataFrame) -> Dict[str, float]:
         """
         Executa backtest com base em sinais de trading.
-
-        Args:
-            df_sinais: DataFrame com colunas ['preco', 'proba', 'pred']
-
-        Returns:
-            Dicionário com métricas de performance
         """
         if len(df_sinais) < 2:
             return self._retornar_metricas_vazias()
@@ -66,11 +45,11 @@ class RiskAnalyzer:
         if len(retornos) == 0:
             return self._retornar_metricas_vazias()
 
-        curva_equidade = self._calcular_curva_equidade(retornos)
-        max_drawdown = self._calcular_drawdown(curva_equidade)
-        sharpe_ratio = self._calcular_sharpe_ratio(retornos)
+        curva_equidade = np.cumprod(1 + retornos)
+        max_drawdown = self.calculos.calcular_drawdown(curva_equidade)
+        sharpe_ratio = self.calculos.calcular_sharpe_ratio(retornos)
 
-        return {
+        metricas = {
             'retorno_total': float(np.prod(1 + retornos) - 1),
             'trades': int(len(retornos)),
             'sharpe': float(sharpe_ratio),
@@ -78,6 +57,12 @@ class RiskAnalyzer:
             'retorno_med_diario': float(np.mean(retornos)),
             'equity_curve': curva_equidade.tolist()
         }
+
+        logger.info(f"Backtest realizado - Trades: {metricas['trades']}, "
+                    f"Retorno: {metricas['retorno_total']:.2%}, "
+                    f"Sharpe: {metricas['sharpe']:.2f}")
+
+        return metricas
 
     @staticmethod
     def _retornar_metricas_vazias() -> Dict[str, float]:
@@ -91,41 +76,10 @@ class RiskAnalyzer:
             'equity_curve': []
         }
 
-    @staticmethod
-    def calcular_var(retornos: np.ndarray, nivel_confianca: float = 0.95) -> float:
-        """
-        Calcula Value at Risk (VaR) histórico.
+    def calcular_var(self, retornos: np.ndarray, nivel_confianca: float = None) -> float:
+        """Calcula Value at Risk (VaR) histórico."""
+        return self.calculos.calcular_var(retornos, nivel_confianca)
 
-        Args:
-            retornos: Array de retornos
-            nivel_confianca: Nível de confiança para VaR
-
-        Returns:
-            VaR no nível de confiança especificado
-        """
-        if len(retornos) == 0:
-            return 0.0
-
-        return float(np.percentile(retornos, (1 - nivel_confianca) * 100))
-
-    def calcular_cvar(self, retornos: np.ndarray, nivel_confianca: float = 0.95) -> float:
-        """
-        Calcula Conditional Value at Risk (CVaR).
-
-        Args:
-            retornos: Array de retornos
-            nivel_confianca: Nível de confiança para CVaR
-
-        Returns:
-            CVaR no nível de confiança especificado
-        """
-        if len(retornos) == 0:
-            return 0.0
-
-        var = self.calcular_var(retornos, nivel_confianca)
-        retornos_abaixo_var = retornos[retornos <= var]
-
-        if len(retornos_abaixo_var) == 0:
-            return var
-
-        return float(np.mean(retornos_abaixo_var))
+    def calcular_cvar(self, retornos: np.ndarray, nivel_confianca: float = None) -> float:
+        """Calcula Conditional Value at Risk (CVaR)."""
+        return self.calculos.calcular_cvar(retornos, nivel_confianca)

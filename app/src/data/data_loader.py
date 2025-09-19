@@ -5,11 +5,15 @@ from typing import Tuple
 import pandas as pd
 import yfinance as yf
 
+from src.config.params import Params
+from src.logger.logger import logger
+
 
 class DataLoader:
     """Carrega e gerencia dados de mercado do Yahoo Finance."""
-    def __init__(self, db_path: str = "dados_mercado.db"):
-        self.db_path = db_path
+
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or Params.PATH_DB_MERCADO
         self._criar_tabelas()
 
     @contextmanager
@@ -55,20 +59,17 @@ class DataLoader:
 
         return df_ticker, df_ibov
 
-    def baixar_dados_yf(self, ticker: str, periodo: str = "3y",
-                        intervalo: str = "1d") -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def baixar_dados_yf(self, ticker: str, periodo: str = None,
+                        intervalo: str = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Baixa dados do ticker e do IBOVESPA.
-
-        Args:
-            ticker: Símbolo do ativo
-            periodo: Período histórico
-            intervalo: Intervalo dos dados
-
-        Returns:
-            Tuple com DataFrames do ticker e IBOV
         """
+        periodo = periodo or Params.PERIODO_DADOS
+        intervalo = intervalo or Params.INTERVALO_DADOS
+
         try:
+            logger.info(f"Baixando dados para {ticker} - Período: {periodo}, Intervalo: {intervalo}")
+
             dados_completos = yf.download(
                 f"{ticker} ^BVSP",
                 period=periodo,
@@ -80,9 +81,11 @@ class DataLoader:
             df_ticker, df_ibov = self._processar_dados_yfinance(dados_completos, ticker)
             self.salvar_ohlcv(ticker, df_ticker)
 
+            logger.info(f"Dados baixados - {ticker}: {len(df_ticker)} registros")
             return df_ticker, df_ibov
 
         except Exception as e:
+            logger.error(f"Erro ao baixar dados do yfinance: {e}")
             raise Exception(f"Erro ao baixar dados do yfinance: {e}")
 
     def salvar_ohlcv(self, ticker: str, df: pd.DataFrame):
@@ -109,6 +112,8 @@ class DataLoader:
 
             conn.commit()
 
+        logger.info(f"Dados salvos no BD - {ticker}: {len(df)} registros")
+
     def carregar_do_bd(self, ticker: str) -> pd.DataFrame:
         """Carrega dados OHLCV do banco de dados."""
         with self._conexao() as conn:
@@ -119,6 +124,7 @@ class DataLoader:
             return pd.DataFrame()
 
         df["date"] = pd.to_datetime(df["date"])
+        logger.info(f"Dados carregados do BD - {ticker}: {len(df)} registros")
         return df.set_index("date")[["Open", "High", "Low", "Close", "Volume"]]
 
     def verificar_dados_disponiveis(self, ticker: str) -> bool:
@@ -129,4 +135,7 @@ class DataLoader:
                 "SELECT COUNT(*) FROM ohlcv WHERE ticker = ?",
                 (ticker,)
             )
-            return cursor.fetchone()[0] > 0
+            count = cursor.fetchone()[0] > 0
+
+        logger.info(f"Verificação de dados - {ticker}: {'Disponível' if count else 'Indisponível'}")
+        return count

@@ -1,86 +1,30 @@
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional
 
-import numpy as np
 import pandas as pd
+
+from src.logger.logger import logger
+from src.utils.financial_calculation import CalculosFinanceiros
 
 
 class FeatureEngineer:
     """Realiza engenharia de features para dados financeiros."""
 
     def __init__(self):
-        self._indicadores_config = {
-            'rsi_periodo': 14,
-            'stoch_periodo': 14,
-            'bollinger_periodo': 20,
-            'atr_periodo': 14,
-            'cmf_periodo': 20
-        }
+        self.calculos = CalculosFinanceiros()
 
-    @staticmethod
-    def _calcular_indicador_rsi(precos: pd.Series, periodo: int = 14) -> pd.Series:
-        """Calcula o Relative Strength Index (RSI)."""
-        delta = precos.diff()
-        ganho = (delta.where(delta > 0, 0)).rolling(window=periodo).mean()
-        perda = (-delta.where(delta < 0, 0)).rolling(window=periodo).mean()
-        rs = ganho / (perda + 1e-9)
-        return 100 - (100 / (1 + rs))
-
-    @staticmethod
-    def _calcular_indicador_stochastic(fechamento: pd.Series, alta: pd.Series,
-                                       baixa: pd.Series, periodo: int = 14) -> pd.Series:
-        """Calcula o Stochastic Oscillator."""
-        menor_baixa = baixa.rolling(window=periodo).min()
-        maior_alta = alta.rolling(window=periodo).max()
-        return 100 * (fechamento - menor_baixa) / (maior_alta - menor_baixa + 1e-9)
-
-    @staticmethod
-    def _calcular_bandas_bollinger(precos: pd.Series, periodo: int = 20) -> Dict[str, pd.Series]:
-        """Calcula as Bandas de Bollinger."""
-        media_movel = precos.rolling(window=periodo).mean()
-        desvio_padrao = precos.rolling(window=periodo).std()
-
-        return {
-            'superior': media_movel + (desvio_padrao * 2),
-            'inferior': media_movel - (desvio_padrao * 2)
-        }
-
-    @staticmethod
-    def _calcular_atr(alta: pd.Series, baixa: pd.Series,
-                      fechamento: pd.Series, periodo: int = 14) -> pd.Series:
-        """Calcula o Average True Range (ATR)."""
-        tr1 = alta - baixa
-        tr2 = abs(alta - fechamento.shift())
-        tr3 = abs(baixa - fechamento.shift())
-        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        return true_range.rolling(periodo).mean()
-
-    @staticmethod
-    def _calcular_obv(fechamento: pd.Series, volume: pd.Series) -> pd.Series:
-        """Calcula o On-Balance Volume (OBV)."""
-        retornos = fechamento.pct_change()
-        return (volume * np.sign(retornos.fillna(0))).cumsum()
-
-    @staticmethod
-    def _calcular_cmf(alta: pd.Series, baixa: pd.Series, fechamento: pd.Series,
-                      volume: pd.Series, periodo: int = 20) -> pd.Series:
-        """Calcula o Chaikin Money Flow (CMF)."""
-        multiplicador_mf = ((fechamento - baixa) - (alta - fechamento)) / (alta - baixa + 1e-9)
-        volume_mf = multiplicador_mf * volume
-        return volume_mf.rolling(periodo).sum() / volume.rolling(periodo).sum()
-
-    @staticmethod
-    def _adicionar_features_basicas(df: pd.DataFrame) -> pd.DataFrame:
+    def _adicionar_features_basicas(self, df: pd.DataFrame) -> pd.DataFrame:
         """Adiciona features básicas ao DataFrame."""
         fechamento = df['Close']
 
         # Retornos
-        for dias in [1, 3, 5]:
-            df[f'retorno_{dias}d'] = fechamento.pct_change(dias)
+        retornos = self.calculos.calcular_retornos(fechamento)
+        for nome, valor in retornos.items():
+            df[nome] = valor
 
         # Médias móveis
-        for janela in [5, 10, 20, 50]:
-            df[f'sma_{janela}'] = fechamento.rolling(janela).mean()
-            df[f'ema_{janela}'] = fechamento.ewm(span=janela).mean()
+        medias = self.calculos.calcular_medias_moveis(fechamento)
+        for nome, valor in medias.items():
+            df[nome] = valor
 
         # Ratios entre médias
         df['sma_ratio_5_20'] = df['sma_5'] / df['sma_20']
@@ -96,11 +40,11 @@ class FeatureEngineer:
         volume = df['Volume']
 
         # RSI e Stochastic
-        df['rsi_14'] = self._calcular_indicador_rsi(fechamento, 14)
-        df['stoch_14'] = self._calcular_indicador_stochastic(fechamento, alta, baixa, 14)
+        df['rsi_14'] = self.calculos.calcular_rsi(fechamento)
+        df['stoch_14'] = self.calculos.calcular_stochastic(fechamento, alta, baixa)
 
         # Bandas de Bollinger
-        bandas = self._calcular_bandas_bollinger(fechamento, 20)
+        bandas = self.calculos.calcular_bandas_bollinger(fechamento)
         df['bollinger_upper'] = bandas['superior']
         df['bollinger_lower'] = bandas['inferior']
         df['bollinger_pct'] = (fechamento - bandas['inferior']) / (bandas['superior'] - bandas['inferior'] + 1e-9)
@@ -111,8 +55,8 @@ class FeatureEngineer:
         df['macd_hist'] = df['macd'] - df['macd_signal']
 
         # ATR e OBV
-        df['atr_14'] = self._calcular_atr(alta, baixa, fechamento, 14)
-        df['obv'] = self._calcular_obv(fechamento, volume)
+        df['atr_14'] = self.calculos.calcular_atr(alta, baixa, fechamento)
+        df['obv'] = self.calculos.calcular_obv(fechamento, volume)
 
         return df
 
@@ -158,13 +102,6 @@ class FeatureEngineer:
     def criar_features(self, df_ohlc: pd.DataFrame, df_ibov: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """
         Cria features completas a partir de dados OHLC.
-
-        Args:
-            df_ohlc: DataFrame com dados OHLC
-            df_ibov: DataFrame com dados do IBOV (opcional)
-
-        Returns:
-            DataFrame com features engineering
         """
         df = df_ohlc.copy()
 
@@ -178,6 +115,7 @@ class FeatureEngineer:
         df = self._adicionar_features_avancadas(df)
         df = self._adicionar_features_ibov(df, df_ibov)
 
+        logger.info(f"Features criadas - Total: {len(df.columns)} colunas")
         return df.dropna()
 
     def preparar_dataset_classificacao(self, df_ohlc: pd.DataFrame,
@@ -185,9 +123,6 @@ class FeatureEngineer:
         pd.DataFrame, pd.Series, pd.Series]:
         """
         Prepara dataset para classificação.
-
-        Returns:
-            Tuple com (X_features, y_target, preços)
         """
         df_features = self.criar_features(df_ohlc, df_ibov)
         fechamento = df_features['Close']
@@ -207,6 +142,7 @@ class FeatureEngineer:
 
         precos = fechamento.loc[y.index]
 
+        logger.info(f"Dataset preparado - X: {X.shape}, y: {y.shape}")
         return (
             X.reset_index(drop=True),
             y.reset_index(drop=True).rename('target'),

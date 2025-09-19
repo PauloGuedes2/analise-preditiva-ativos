@@ -10,21 +10,25 @@ from sklearn.metrics import accuracy_score, brier_score_loss
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
+from src.config.params import Params, ModelParams
 from src.data.database_manager import DatabaseManager
+from src.logger.logger import logger
 from src.models.feature_engineer import FeatureEngineer
 from src.utils.risk_analyzer import RiskAnalyzer
+from src.utils.utils import ValidadorDados
 
 
 class ClassificadorTrading:
     """Sistema de classificação para previsão de direção de preços."""
 
-    def __init__(self, n_features: int = 25, random_state: int = 42,
-                 confidence_operar: float = 0.60, otimizar_hiperparametros: bool = True):
+    def __init__(self, n_features: int = None, random_state: int = None,
+                 confidence_operar: float = None, otimizar_hiperparametros: bool = None):
 
-        self.n_features = n_features
-        self.random_state = random_state
-        self.confidence_operar = confidence_operar
-        self.otimizar_hiperparametros = otimizar_hiperparametros
+        # Usar parâmetros padrão se não especificados
+        self.n_features = n_features or Params.N_FEATURES
+        self.random_state = random_state or Params.RANDOM_STATE
+        self.confidence_operar = confidence_operar or Params.CONFIDENCE_OPERAR
+        self.otimizar_hiperparametros = otimizar_hiperparametros or Params.OTIMIZAR_HIPERPARAMETROS
 
         self._inicializar_modelos_base()
         self._inicializar_utilitarios()
@@ -32,15 +36,10 @@ class ClassificadorTrading:
     def _inicializar_modelos_base(self):
         """Inicializa os modelos base do ensemble."""
         self.modelos_base = {
-            'rf': RandomForestClassifier(n_estimators=300, n_jobs=-1,
-                                         random_state=self.random_state),
-            'gb': GradientBoostingClassifier(n_estimators=200,
-                                             random_state=self.random_state),
-            'lr': LogisticRegression(max_iter=1000,
-                                     random_state=self.random_state),
-            'nn': MLPClassifier(hidden_layer_sizes=(30, 15), alpha=0.1,
-                                max_iter=1000, random_state=self.random_state,
-                                early_stopping=True)
+            'rf': RandomForestClassifier(**ModelParams.RANDOM_FOREST),
+            'gb': GradientBoostingClassifier(**ModelParams.GRADIENT_BOOSTING),
+            'lr': LogisticRegression(**ModelParams.LOGISTIC_REGRESSION),
+            'nn': MLPClassifier(**ModelParams.MLP)
         }
 
         self.scalers = {nome: StandardScaler() for nome in self.modelos_base.keys()}
@@ -59,34 +58,17 @@ class ClassificadorTrading:
         """Otimiza hiperparâmetros para um modelo específico."""
         from sklearn.model_selection import RandomizedSearchCV
 
-        grades_parametros = {
-            'rf': {
-                'n_estimators': [100, 200, 300],
-                'max_depth': [None, 10, 20],
-                'min_samples_split': [2, 5, 10]
-            },
-            'gb': {
-                'n_estimators': [100, 200],
-                'learning_rate': [0.01, 0.05, 0.1],
-                'max_depth': [3, 5, 7]
-            },
-            'lr': {
-                'C': [0.1, 1.0, 10.0],
-                'penalty': ['l2']
-            },
-            'nn': {
-                'hidden_layer_sizes': [(50,), (100,), (50, 30)],
-                'alpha': [0.0001, 0.001, 0.01],
-                'learning_rate_init': [0.001, 0.01]
-            }
-        }
-
         nome_modelo = self._identificar_tipo_modelo(modelo)
 
-        if nome_modelo and nome_modelo in grades_parametros:
+        if nome_modelo and nome_modelo in ModelParams.GRADES_OTIMIZACAO:
             busca = RandomizedSearchCV(
-                modelo, grades_parametros[nome_modelo], n_iter=10, cv=3,
-                scoring='accuracy', n_jobs=-1, random_state=self.random_state
+                modelo,
+                ModelParams.GRADES_OTIMIZACAO[nome_modelo],
+                n_iter=10,
+                cv=3,
+                scoring='accuracy',
+                n_jobs=-1,
+                random_state=self.random_state
             )
             busca.fit(X, y)
             return busca.best_estimator_
@@ -101,9 +83,12 @@ class ClassificadorTrading:
         return None
 
     @staticmethod
-    def _criar_divisoes_temporais(n_observacoes: int, n_splits: int = 4,
-                                  purge_days: int = 1) -> List[Tuple[np.ndarray, np.ndarray]]:
+    def _criar_divisoes_temporais(n_observacoes: int, n_splits: int = None,
+                                  purge_days: int = None) -> List[Tuple[np.ndarray, np.ndarray]]:
         """Cria divisões temporais para validação walk-forward."""
+        n_splits = n_splits or Params.N_SPLITS
+        purge_days = purge_days or Params.PURGE_DAYS
+
         divisoes = []
 
         if n_splits <= 0:
@@ -171,14 +156,23 @@ class ClassificadorTrading:
         features_ordenadas = sorted(votos.items(), key=lambda x: x[1], reverse=True)
         selecionadas = [feature for feature, voto in features_ordenadas[:self.n_features]]
 
-        print(f"🔍 Top 10 features selecionadas: {selecionadas[:10]}")
-        print(f"📊 Scores das top 5: {[voto for _, voto in features_ordenadas[:5]]}")
+        logger.info(f"Top 10 features selecionadas: {selecionadas[:10]}")
+        logger.info(f"Scores das top 5: {[voto for _, voto in features_ordenadas[:5]]}")
 
         return selecionadas
 
     def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series,
-                n_splits: int = 4, purge_days: int = 2) -> Dict[str, Any]:
+                n_splits: int = None, purge_days: int = None) -> Dict[str, Any]:
         """Treina o sistema de classificação."""
+        n_splits = n_splits or Params.N_SPLITS
+        purge_days = purge_days or Params.PURGE_DAYS
+
+        logger.info(f"Iniciando treinamento com {n_splits} splits e {purge_days} dias de purge")
+
+        # Validação dos dados
+        if not ValidadorDados.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
+            raise ValueError("Dados insuficientes ou inválidos para treinamento")
+
         # Seleção de features
         self.features_selecionadas = self.selecionar_features_estaveis(X, y)
         X_selecionado = X[self.features_selecionadas].reset_index(drop=True)
@@ -221,6 +215,7 @@ class ClassificadorTrading:
         }
         self.db.salvar_treino_metadata(meta)
 
+        logger.info("Treinamento concluído com sucesso")
         return metricas
 
     def _treinar_modelos_cv(self, X: pd.DataFrame, y: pd.Series,
@@ -262,6 +257,8 @@ class ClassificadorTrading:
             scores_cv[nome] = float(np.mean(scores_modelo))
             stds_cv[nome] = float(np.std(scores_modelo))
 
+            logger.info(f"Modelo {nome} - Acurácia CV: {scores_cv[nome]:.3f} ± {stds_cv[nome]:.3f}")
+
         return scores_cv, stds_cv
 
     def _ajustar_pesos_modelos(self, scores_cv: Dict[str, float], stds_cv: Dict[str, float]):
@@ -281,6 +278,8 @@ class ClassificadorTrading:
             for nome in self.pesos_modelos:
                 self.pesos_modelos[nome] = 1.0 / len(self.pesos_modelos)
 
+        logger.info(f"Pesos dos modelos: {self.pesos_modelos}")
+
     def calibrar_threshold_operacional(self, X: pd.DataFrame, y: pd.Series):
         """Calibra threshold operacional baseado em Brier Score."""
         probas = self.predict_proba(X)
@@ -294,7 +293,7 @@ class ClassificadorTrading:
         melhor_threshold = thresholds[np.argmin(brier_scores)]
         self.threshold_operacional = melhor_threshold
 
-        print(f"🎯 Threshold operacional calibrado: {melhor_threshold:.3f}")
+        logger.info(f"Threshold operacional calibrado: {melhor_threshold:.3f}")
 
     def _treinar_meta_modelo(self, X: pd.DataFrame, y: pd.Series):
         """Treina meta-modelo para combinar previsões."""
@@ -302,6 +301,7 @@ class ClassificadorTrading:
 
         self.meta_modelo = LogisticRegression(random_state=self.random_state)
         self.meta_modelo.fit(probas_modelos, y)
+        logger.info("Meta-modelo treinado com sucesso")
 
     def _obter_probas_modelos(self, X: pd.DataFrame) -> np.ndarray:
         """Obtém probabilidades de todos os modelos."""
@@ -333,7 +333,7 @@ class ClassificadorTrading:
         risk_analyzer = RiskAnalyzer()
         metricas_risco = risk_analyzer.backtest_sinais(df_sinais)
 
-        return {
+        metricas = {
             'acuracia': acuracia,
             'precisao': precisao,
             'trades': metricas_risco['trades'],
@@ -342,6 +342,9 @@ class ClassificadorTrading:
             'max_drawdown': metricas_risco['max_drawdown'],
             'brier_score': brier_score_loss(y, probas)
         }
+
+        logger.info(f"Performance no holdout - Acurácia: {acuracia:.3f}, Sharpe: {metricas_risco['sharpe']:.2f}")
+        return metricas
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """Prediz probabilidades usando ensemble ponderado."""
@@ -408,20 +411,14 @@ class ClassificadorTrading:
             }
         })
 
+        logger.info(f"Previsão realizada - Direção: {'ALTA' if pred[-1] == 1 else 'BAIXA'}, "
+                    f"Confiança: {proba[-1]:.1%}, Operar: {should_operate}")
         return resultado
 
     def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series,
                               retornar_dataframe: bool = False) -> Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]]:
         """
         Gera sinais de trading baseados nas previsões do modelo.
-
-        Args:
-            X: DataFrame com features
-            precos: Série com preços correspondentes
-            retornar_dataframe: Se True, retorna DataFrame com sinais
-
-        Returns:
-            DataFrame com sinais ou tupla com predições e probabilidades
         """
         X_selecionado = X[self.features_selecionadas].reset_index(drop=True)
         proba = np.array(self.predict_proba(X_selecionado)).ravel()
