@@ -112,7 +112,7 @@ class FeatureEngineer:
 
         if len(precos) < n_dias * 2:
             logger.warning(f"Dados insuficientes para tripla barreira em {ticker}")
-            return pd.Series(), pd.Series()
+            return pd.Series(dtype=int), pd.Series(dtype=object)
 
         volatilidade = self.calculos.calcular_atr(df_completo['High'], df_completo['Low'], df_completo['Close'], 14)
         volatilidade = volatilidade.reindex(precos.index).ffill().bfill()
@@ -125,11 +125,11 @@ class FeatureEngineer:
         labels = pd.Series(0, index=precos.index)
         t1 = pd.Series(pd.NaT, index=precos.index)
 
-        for i in range(len(precos) - n_dias):
+        n = min(len(precos) - n_dias, len(precos) - 1)
+        for i in range(n):
             t0 = precos.index[i]
             pt = barreira_superior.iloc[i]
             sl = barreira_inferior.iloc[i]
-
             t1.iloc[i] = self._get_event_end_time(precos, t0, pt, sl, n_dias)
 
             event_prices = precos[t0:t1.iloc[i]]
@@ -160,7 +160,10 @@ class FeatureEngineer:
         df.dropna(inplace=True)
 
         if df.empty:
-            return pd.DataFrame(), pd.Series(), pd.Series(), pd.Series()
+            return (pd.DataFrame(),
+                    pd.Series(dtype=int),
+                    pd.Series(dtype=float),
+                    pd.Series(dtype=object))
 
         # Criar labels usando os preços originais
         labels, t1 = self._criar_labels_tripla_barreira(

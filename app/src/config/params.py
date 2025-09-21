@@ -8,6 +8,7 @@ class Params:
     PERIODO_DADOS: str = "3y"
     INTERVALO_DADOS: str = "1d"
     MINIMO_DADOS_TREINO: int = 300
+    LIMITE_PREVISOES_RECENTES = 100
 
     TICKERS: List[str] = [
         "PETR4.SA", "VALE3.SA", "ITSA4.SA", "ELET3.SA", "ITUB4.SA"

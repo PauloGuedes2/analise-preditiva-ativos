@@ -23,8 +23,8 @@ class PurgedKFoldCV(KFold):
             raise ValueError(f"Dados insuficientes para {self.n_splits} splits. "
                              f"Necessário mínimo de {self.n_splits * 50} amostras.")
 
-        if (X.index == self.t1.index).sum() != len(self.t1):
-            raise ValueError("Índices de X e t1 devem ser idênticos.")
+        if not X.index.equals(self.t1.index):
+            raise ValueError(...)
 
         indices = np.arange(X.shape[0])
         mbrg = self.purge_days

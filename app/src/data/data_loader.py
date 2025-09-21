@@ -79,7 +79,8 @@ class DataLoader:
                 timeout=30
             )
 
-            if dados_completos.empty or ticker not in dados_completos['Close'].columns:
+            if dados_completos.empty or 'Close' not in dados_completos.columns or ticker not in dados_completos[
+                'Close'].columns:
                 raise ValueError(f"Nenhum dado retornado para o ticker {ticker}.")
 
             df_ticker, df_ibov = self._processar_dados_yfinance(dados_completos, ticker)
@@ -91,15 +92,6 @@ class DataLoader:
         except Exception as e:
             logger.error(f"Erro crítico ao baixar dados do yfinance para {ticker}: {e}")
             raise
-
-        except Exception as e:
-            logger.error(f"Erro crítico ao baixar dados do yfinance: {e}")
-            # Tentar carregar do banco de dados se disponível
-            df_bd = self.carregar_do_bd(ticker)
-            if not df_bd.empty:
-                logger.info(f"Usando dados do BD para {ticker}: {len(df_bd)} registros")
-                return df_bd, pd.DataFrame()
-            raise Exception(f"Erro ao baixar dados e nenhum backup disponível: {e}")
 
     def salvar_ohlcv(self, ticker: str, df: pd.DataFrame):
         """Salva dados OHLCV no banco de dados."""
@@ -152,3 +144,35 @@ class DataLoader:
 
         logger.info(f"Verificação de dados - {ticker}: {'Disponível' if count else 'Indisponível'}")
         return count
+
+    def atualizar_dados_ticker(self, ticker: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Atualiza os dados do ticker e do IBOV, salvando no banco de dados.
+        Retorna os dados atualizados. Levanta exceção em caso de falha.
+        """
+        logger.info(f"Atualizando dados para {ticker}...")
+
+        try:
+            dados_completos = yf.download(
+                f"{ticker} ^BVSP",
+                period=Params.PERIODO_DADOS,
+                interval=Params.INTERVALO_DADOS,
+                progress=False,
+                auto_adjust=True,
+                timeout=15
+            )
+
+            if dados_completos.empty:
+                raise ValueError(f"Nenhum dado novo retornado para {ticker} do yfinance.")
+
+            df_ticker, df_ibov = self._processar_dados_yfinance(dados_completos, ticker)
+
+            # Salva no banco de dados
+            self.salvar_ohlcv(ticker, df_ticker)
+
+            logger.info(f"Dados atualizados com sucesso para {ticker}")
+            return df_ticker, df_ibov
+
+        except Exception as e:
+            logger.error(f"Erro ao atualizar dados para {ticker}: {e}")
+            raise  # Levanta a exceção para que a camada superior (UI, updater) possa tratá-la

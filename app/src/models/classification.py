@@ -2,6 +2,7 @@ import os
 
 from sklearn.feature_selection import SelectFromModel
 
+from src.models.validation import PurgedKFoldCV
 from src.utils.risk_analyzer import RiskAnalyzer
 
 os.environ['LIGHTGBM_VERBOSE'] = '-1'
@@ -17,7 +18,6 @@ import optuna
 from src.config.params import Params
 from src.logger.logger import logger
 from src.utils.utils import ValidadorDados
-from src.models.validation import PurgedKFoldCV
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -34,6 +34,8 @@ class ClassificadorTrading:
         self.label_encoder = LabelEncoder()
         self.threshold_operacional = 0.5
         self.wfv_metrics = {}
+        self.cv_gen = None
+        self.X_scaled = None
 
     def _selecionar_features(self, X: pd.DataFrame, y: pd.Series) -> List[str]:
         """Seleciona as features mais importantes usando a importância do LightGBM."""
@@ -62,7 +64,7 @@ class ClassificadorTrading:
         logger.info(f"Features selecionadas: {len(features_selecionadas)}")
         return features_selecionadas
 
-    def _otimizar_com_optuna(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, cv_gen: PurgedKFoldCV) -> Dict[
+    def _otimizar_com_optuna(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, cv_gen) -> Dict[
         str, Any]:
         """Otimiza hiperparâmetros do LightGBM usando Optuna, focando no Sharpe Ratio."""
         logger.info("Iniciando otimização com Optuna focada em Sharpe Ratio...")

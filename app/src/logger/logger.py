@@ -1,69 +1,34 @@
-"""
-Sistema de logging unificado para toda a aplicação.
-"""
+# Em src/logger/logger.py
 
 import logging
 import sys
-from typing import Optional
-
 from src.config.params import Params
 
+def get_logger():
+    """
+    Configura e retorna um logger padrão do Python, garantindo que os handlers
+    não sejam duplicados. Esta é a abordagem recomendada e thread-safe.
+    """
+    logger = logging.getLogger("trading_app_logger") # Nome único para evitar conflitos
 
-class Logger:
-    """Logger centralizado para toda a aplicação."""
+    # Evita adicionar handlers se o logger já estiver configurado
+    if not logger.handlers:
+        logger.setLevel(getattr(logging, Params.LOG_LEVEL, logging.INFO))
 
-    _instance: Optional['Logger'] = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._inicializar_logger()
-        return cls._instance
-
-    def _inicializar_logger(self):
-        """Configura o logger com as configurações padrão."""
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(getattr(logging, Params.LOG_LEVEL))
-
-        # Remove handlers existentes
-        for handler in self.logger.handlers[:]:
-            self.logger.removeHandler(handler)
-
-        # Configura formatação
         formatter = logging.Formatter(
-            Params.LOG_FORMAT,
+            fmt=Params.LOG_FORMAT,
             datefmt=Params.LOG_DATE_FORMAT
         )
 
         # Handler para console
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
-        self.logger.addHandler(console_handler)
+        logger.addHandler(console_handler)
 
-    def debug(self, mensagem: str):
-        """Log nível DEBUG."""
-        self.logger.debug(mensagem)
+        # Evita que o log seja propagado para o logger root
+        logger.propagate = False
 
-    def info(self, mensagem: str):
-        """Log nível INFO."""
-        self.logger.info(mensagem)
+    return logger
 
-    def warning(self, mensagem: str):
-        """Log nível WARNING."""
-        self.logger.warning(mensagem)
-
-    def error(self, mensagem: str):
-        """Log nível ERROR."""
-        self.logger.error(mensagem)
-
-    def critical(self, mensagem: str):
-        """Log nível CRITICAL."""
-        self.logger.critical(mensagem)
-
-    def exception(self, mensagem: str):
-        """Log de exceção com traceback."""
-        self.logger.exception(mensagem)
-
-
-# Instância global do logger
-logger = Logger()
+# Instância global para ser importada por outros módulos
+logger = get_logger()

@@ -64,9 +64,9 @@ class RiskAnalyzer:
             'sharpe': self.calculos.calcular_sharpe_ratio(retornos),
             'max_drawdown': self.calculos.calcular_drawdown(np.insert(curva_equidade, 0, 1)),
             'win_rate': np.sum(retornos > 0) / len(retornos),
-            'equity_curve': np.insert(curva_equidade, 0, 1).tolist()
+            'equity_curve': np.insert(curva_equidade, 0, 1).tolist(),
+            'retornos': retornos.tolist()
         }
-
         if verbose:
             logger.info(
                 f"Backtest: {metricas['trades']} trades, Retorno: {metricas['retorno_total']:.2%}, Sharpe: {metricas['sharpe']:.2f}")

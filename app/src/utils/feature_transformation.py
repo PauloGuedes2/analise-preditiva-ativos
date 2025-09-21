@@ -27,7 +27,7 @@ class FractionalDifferentiator:
         w = FractionalDifferentiator.get_weights_ffd(d, thres)
         width = len(w) - 1
 
-        df = pd.Series(dtype=np.float64)
+        df = pd.Series(dtype=float)
         for iloc1 in range(width, series.shape[0]):
             loc0, loc1 = series.index[iloc1 - width], series.index[iloc1]
             if not np.isfinite(series.loc[loc1]):

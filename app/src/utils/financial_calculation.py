@@ -19,10 +19,11 @@ class CalculosFinanceiros:
     @staticmethod
     def calcular_stochastic(fechamento: pd.Series, alta: pd.Series,
                             baixa: pd.Series, periodo: int = 14) -> pd.Series:
-        """Calcula o Stochastic Oscillator."""
         menor_baixa = baixa.rolling(window=periodo).min()
         maior_alta = alta.rolling(window=periodo).max()
-        return 100 * (fechamento - menor_baixa) / (maior_alta - menor_baixa + 1e-9)
+        denominador = maior_alta - menor_baixa
+        denominador = denominador.replace(0, np.nan)
+        return 100 * (fechamento - menor_baixa) / denominador
 
     @staticmethod
     def calcular_bandas_bollinger(precos: pd.Series, periodo: int = 20) -> Dict[str, pd.Series]:
