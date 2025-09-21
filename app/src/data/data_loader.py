@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import contextmanager
 from typing import Tuple
@@ -14,6 +15,7 @@ class DataLoader:
 
     def __init__(self, db_path: str = None):
         self.db_path = db_path or Params.PATH_DB_MERCADO
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._criar_tabelas()
 
     @contextmanager
@@ -61,22 +63,32 @@ class DataLoader:
 
     def baixar_dados_yf(self, ticker: str, periodo: str = None,
                         intervalo: str = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Baixa dados do ticker e do IBOVESPA.
-        """
+        """Baixa dados do ticker e do IBOVESPA com tratamento de erro robusto."""
         periodo = periodo or Params.PERIODO_DADOS
         intervalo = intervalo or Params.INTERVALO_DADOS
 
         try:
             logger.info(f"Baixando dados para {ticker} - Período: {periodo}, Intervalo: {intervalo}")
 
-            dados_completos = yf.download(
-                f"{ticker} ^BVSP",
-                period=periodo,
-                interval=intervalo,
-                progress=False,
-                auto_adjust=True
-            )
+            # Tentar baixar primeiro apenas o ticker principal
+            try:
+                dados_completos = yf.download(
+                    f"{ticker} ^BVSP",
+                    period=periodo,
+                    interval=intervalo,
+                    progress=False,
+                    auto_adjust=True,
+                    timeout=30  # Aumentar timeout
+                )
+            except Exception as e:
+                logger.warning(f"Erro ao baixar IBOV junto, tentando apenas {ticker}: {e}")
+                # Se falhar, baixar apenas o ticker principal
+                dados_ticker = yf.download(ticker, period=periodo, interval=intervalo,
+                                           progress=False, auto_adjust=True, timeout=30)
+                df_ticker = dados_ticker[['Open', 'High', 'Low', 'Close', 'Volume']]
+                df_ibov = pd.DataFrame()  # DataFrame vazio para IBOV
+                self.salvar_ohlcv(ticker, df_ticker)
+                return df_ticker, df_ibov
 
             df_ticker, df_ibov = self._processar_dados_yfinance(dados_completos, ticker)
             self.salvar_ohlcv(ticker, df_ticker)
@@ -85,8 +97,13 @@ class DataLoader:
             return df_ticker, df_ibov
 
         except Exception as e:
-            logger.error(f"Erro ao baixar dados do yfinance: {e}")
-            raise Exception(f"Erro ao baixar dados do yfinance: {e}")
+            logger.error(f"Erro crítico ao baixar dados do yfinance: {e}")
+            # Tentar carregar do banco de dados se disponível
+            df_bd = self.carregar_do_bd(ticker)
+            if not df_bd.empty:
+                logger.info(f"Usando dados do BD para {ticker}: {len(df_bd)} registros")
+                return df_bd, pd.DataFrame()
+            raise Exception(f"Erro ao baixar dados e nenhum backup disponível: {e}")
 
     def salvar_ohlcv(self, ticker: str, df: pd.DataFrame):
         """Salva dados OHLCV no banco de dados."""

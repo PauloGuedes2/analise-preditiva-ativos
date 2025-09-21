@@ -1,468 +1,272 @@
-from typing import List, Tuple, Dict, Any, Optional, Union
+import os
 
+from sklearn.feature_selection import SelectFromModel
+
+from src.utils.risk_analyzer import RiskAnalyzer
+
+os.environ['LIGHTGBM_VERBOSE'] = '-1'
+
+from typing import Dict, Any, List
 import numpy as np
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.feature_selection import mutual_info_classif
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, brier_score_loss
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
+import lightgbm as lgb
+from sklearn.metrics import accuracy_score, f1_score
+from sklearn.preprocessing import RobustScaler, LabelEncoder
+import optuna
 
-from src.config.params import Params, ModelParams
-from src.data.database_manager import DatabaseManager
+from src.config.params import Params
 from src.logger.logger import logger
-from src.models.feature_engineer import FeatureEngineer
-from src.utils.risk_analyzer import RiskAnalyzer
 from src.utils.utils import ValidadorDados
+from src.models.validation import PurgedKFoldCV
+
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 class ClassificadorTrading:
     """Sistema de classificação para previsão de direção de preços."""
 
-    def __init__(self, n_features: int = None, random_state: int = None,
-                 confidence_operar: float = None, otimizar_hiperparametros: bool = None):
-
-        # Usar parâmetros padrão se não especificados
-        self.n_features = n_features or Params.N_FEATURES
-        self.random_state = random_state or Params.RANDOM_STATE
-        self.confidence_operar = confidence_operar or Params.CONFIDENCE_OPERAR
-        self.otimizar_hiperparametros = otimizar_hiperparametros or Params.OTIMIZAR_HIPERPARAMETROS
-
-        self._inicializar_modelos_base()
-        self._inicializar_utilitarios()
-
-    def _inicializar_modelos_base(self):
-        """Inicializa os modelos base do ensemble."""
-        self.modelos_base = {
-            'rf': RandomForestClassifier(**ModelParams.RANDOM_FOREST),
-            'gb': GradientBoostingClassifier(**ModelParams.GRADIENT_BOOSTING),
-            'lr': LogisticRegression(**ModelParams.LOGISTIC_REGRESSION),
-            'nn': MLPClassifier(**ModelParams.MLP)
-        }
-
-        self.scalers = {nome: StandardScaler() for nome in self.modelos_base.keys()}
-        self.modelos_treinados = {}
-        self.pesos_modelos = {}
-
-    def _inicializar_utilitarios(self):
-        """Inicializa utilitários auxiliares."""
-        self.db = DatabaseManager()
-        self.feature_engineer = FeatureEngineer()
+    def __init__(self):
+        self.random_state = Params.RANDOM_STATE
+        self.n_features = Params.N_FEATURES_A_SELECIONAR
+        self.modelo_final = None
         self.features_selecionadas = []
+        self.scaler = RobustScaler()
+        self.label_encoder = LabelEncoder()
         self.threshold_operacional = 0.5
-        self.meta_modelo = None
+        self.wfv_metrics = {}
 
-    def _otimizar_hiperparametros_modelo(self, modelo, X: np.ndarray, y: np.ndarray):
-        """Otimiza hiperparâmetros para um modelo específico."""
-        from sklearn.model_selection import RandomizedSearchCV
+    def _selecionar_features(self, X: pd.DataFrame, y: pd.Series) -> List[str]:
+        """Seleciona as features mais importantes usando a importância do LightGBM."""
+        logger.info(f"Iniciando seleção de {self.n_features} features de um total de {X.shape[1]}...")
 
-        nome_modelo = self._identificar_tipo_modelo(modelo)
+        # Usar um modelo base para a seleção
+        modelo_base = lgb.LGBMClassifier(random_state=self.random_state, class_weight='balanced', verbose=-1)
 
-        if nome_modelo and nome_modelo in ModelParams.GRADES_OTIMIZACAO:
-            busca = RandomizedSearchCV(
-                modelo,
-                ModelParams.GRADES_OTIMIZACAO[nome_modelo],
-                n_iter=10,
-                cv=3,
-                scoring='accuracy',
-                n_jobs=-1,
-                random_state=self.random_state
-            )
-            busca.fit(X, y)
-            return busca.best_estimator_
+        num_features_a_selecionar = min(self.n_features, X.shape[1])
+        logger.info(f"Selecionando {num_features_a_selecionar} de {X.shape[1]} features disponíveis.")
 
-        return modelo
+        seletor = SelectFromModel(
+            modelo_base,
+            max_features=num_features_a_selecionar,
+            threshold=-np.inf
+        )
 
-    def _identificar_tipo_modelo(self, modelo) -> Optional[str]:
-        """Identifica o tipo do modelo para otimização."""
-        for nome, modelo_base in self.modelos_base.items():
-            if type(modelo) == type(modelo_base):
-                return nome
-        return None
+        # É uma boa prática escalar os dados antes de avaliar a importância
+        scaler_temp = RobustScaler()
+        X_scaled_temp = scaler_temp.fit_transform(X)
 
-    @staticmethod
-    def _criar_divisoes_temporais(n_observacoes: int, n_splits: int = None,
-                                  purge_days: int = None) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """Cria divisões temporais para validação walk-forward."""
-        n_splits = n_splits or Params.N_SPLITS
-        purge_days = purge_days or Params.PURGE_DAYS
+        seletor.fit(X_scaled_temp, y)
 
-        divisoes = []
+        features_selecionadas = X.columns[seletor.get_support()].tolist()
 
-        if n_splits <= 0:
-            return divisoes
+        logger.info(f"Features selecionadas: {len(features_selecionadas)}")
+        return features_selecionadas
 
-        tamanho_teste = max(int(n_observacoes / (n_splits + 1)), 1)
+    def _otimizar_com_optuna(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, cv_gen: PurgedKFoldCV) -> Dict[
+        str, Any]:
+        """Otimiza hiperparâmetros do LightGBM usando Optuna, focando no Sharpe Ratio."""
+        logger.info("Iniciando otimização com Optuna focada em Sharpe Ratio...")
 
-        for i in range(n_splits):
-            fim_treino = tamanho_teste * (i + 1)
-            inicio_teste = fim_treino + purge_days
-            fim_teste = min(inicio_teste + tamanho_teste, n_observacoes)
-
-            if inicio_teste >= fim_teste:
-                continue
-
-            indices_treino = np.arange(0, fim_treino)
-            indices_teste = np.arange(inicio_teste, fim_teste)
-
-            divisoes.append((indices_treino, indices_teste))
-
-        return divisoes
-
-    def selecionar_features_estaveis(self, X: pd.DataFrame, y: pd.Series,
-                                     n_bootstraps: int = 100, proporcao_top: float = 0.2) -> List[str]:
-        """Seleciona features usando método de estabilidade por bootstrap."""
-        # Garantir colunas simples
-        if isinstance(X.columns, pd.MultiIndex):
-            X.columns = X.columns.get_level_values(0)
-
-        y = np.array(y).ravel().astype(int)
-
-        # Importância por informação mútua
-        scores_mi = mutual_info_classif(X, y, random_state=self.random_state)
-        serie_mi = pd.Series(scores_mi, index=X.columns)
-        top_mi = serie_mi.nlargest(15).index.tolist()
-
-        # Sistema de votação
-        votos = {coluna: 0 for coluna in X.columns}
-
-        # Bonus para features com alta MI
-        for feature in top_mi:
-            votos[feature] += 10
-
-        # Bootstrap com Random Forest
-        n_manter = max(10, int(len(X.columns) * proporcao_top))
-        rng = np.random.RandomState(self.random_state)
-
-        for i in range(n_bootstraps):
-            indices = rng.choice(len(X), size=int(len(X) * 0.8), replace=True)
-            X_bootstrap = X.iloc[indices]
-            y_bootstrap = y[indices]
-
-            rf = RandomForestClassifier(n_estimators=100, n_jobs=-1,
-                                        random_state=self.random_state + i)
-            rf.fit(X_bootstrap, y_bootstrap)
-
-            # Top features por importância
-            importancia = pd.Series(rf.feature_importances_, index=X.columns)
-            top_features = importancia.nlargest(n_manter).index
-
-            for feature in top_features:
-                votos[feature] += 1
-
-        # Selecionar melhores features
-        features_ordenadas = sorted(votos.items(), key=lambda x: x[1], reverse=True)
-        selecionadas = [feature for feature, voto in features_ordenadas[:self.n_features]]
-
-        logger.info(f"Top 10 features selecionadas: {selecionadas[:10]}")
-        logger.info(f"Scores das top 5: {[voto for _, voto in features_ordenadas[:5]]}")
-
-        return selecionadas
-
-    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series,
-                n_splits: int = None, purge_days: int = None) -> Dict[str, Any]:
-        """Treina o sistema de classificação."""
-        n_splits = n_splits or Params.N_SPLITS
-        purge_days = purge_days or Params.PURGE_DAYS
-
-        logger.info(f"Iniciando treinamento com {n_splits} splits e {purge_days} dias de purge")
-
-        # Validação dos dados
-        if not ValidadorDados.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
-            raise ValueError("Dados insuficientes ou inválidos para treinamento")
-
-        # Seleção de features
-        self.features_selecionadas = self.selecionar_features_estaveis(X, y)
-        X_selecionado = X[self.features_selecionadas].reset_index(drop=True)
-        y = y.reset_index(drop=True)
-        precos = precos.reset_index(drop=True)
-
-        # Divisões temporais
-        divisoes = self._criar_divisoes_temporais(len(X_selecionado), n_splits, purge_days)
-
-        if not divisoes:
-            raise ValueError("Divisões insuficientes para validação")
-
-        # Treinamento dos modelos
-        scores_cv, stds_cv = self._treinar_modelos_cv(X_selecionado, y, divisoes)
-        self._ajustar_pesos_modelos(scores_cv, stds_cv)
-
-        # Conjunto de holdout
-        indices_treino, indices_teste = divisoes[-1]
-        X_holdout = X_selecionado.iloc[indices_teste]
-        y_holdout = y.iloc[indices_teste]
-        precos_holdout = precos.iloc[indices_teste]
-
-        # Calibrar threshold operacional
-        self.calibrar_threshold_operacional(X_holdout, y_holdout)
-
-        # Avaliar performance
-        metricas = self._avaliar_performance(X_holdout, y_holdout, precos_holdout)
-
-        # Treinar meta-modelo
-        self._treinar_meta_modelo(X_holdout, y_holdout)
-
-        # Salvar metadados do treinamento
-        meta = {
-            'features': self.features_selecionadas,
-            'pesos': self.pesos_modelos,
-            'cv_scores': scores_cv,
-            'cv_stds': stds_cv,
-            'threshold_operacional': float(self.threshold_operacional),
-            'backtest': metricas
-        }
-        self.db.salvar_treino_metadata(meta)
-
-        logger.info("Treinamento concluído com sucesso")
-        return metricas
-
-    def _treinar_modelos_cv(self, X: pd.DataFrame, y: pd.Series,
-                            divisoes: List[Tuple[np.ndarray, np.ndarray]]) -> Tuple[Dict[str, float], Dict[str, float]]:
-        """Treina modelos com validação cruzada temporal."""
-        scores_cv = {}
-        stds_cv = {}
-
-        for nome, modelo in self.modelos_base.items():
-            scores_modelo = []
-
-            for indices_treino, indices_teste in divisoes:
-                X_treino = X.iloc[indices_treino]
-                y_treino = y.iloc[indices_treino]
-                X_teste = X.iloc[indices_teste]
-                y_teste = y.iloc[indices_teste]
-
-                # Escalar dados
-                self.scalers[nome].fit(X_treino)
-                X_treino_scaled = self.scalers[nome].transform(X_treino)
-                X_teste_scaled = self.scalers[nome].transform(X_teste)
-
-                # Otimizar hiperparâmetros se necessário
-                if self.otimizar_hiperparametros:
-                    modelo = self._otimizar_hiperparametros_modelo(modelo, X_treino_scaled, y_treino)
-
-                # Treinar e avaliar
-                modelo.fit(X_treino_scaled, y_treino)
-                preds = modelo.predict(X_teste_scaled)
-                score = accuracy_score(y_teste, preds)
-                scores_modelo.append(score)
-
-            # Calibrar modelo final
-            X_scaled = self.scalers[nome].transform(X)
-            modelo_calibrado = CalibratedClassifierCV(modelo, cv='prefit', method='isotonic')
-            modelo_calibrado.fit(X_scaled, y)
-
-            self.modelos_treinados[nome] = modelo_calibrado
-            scores_cv[nome] = float(np.mean(scores_modelo))
-            stds_cv[nome] = float(np.std(scores_modelo))
-
-            logger.info(f"Modelo {nome} - Acurácia CV: {scores_cv[nome]:.3f} ± {stds_cv[nome]:.3f}")
-
-        return scores_cv, stds_cv
-
-    def _ajustar_pesos_modelos(self, scores_cv: Dict[str, float], stds_cv: Dict[str, float]):
-        """Ajusta pesos dos modelos baseados na performance CV."""
-        for nome, score in scores_cv.items():
-            # Penalizar alta variabilidade
-            penalidade_std = max(0, 1 - (stds_cv[nome] / 0.1))
-            self.pesos_modelos[nome] = score * penalidade_std
-
-        # Normalizar pesos
-        total = sum(self.pesos_modelos.values())
-        if total > 0:
-            for nome in self.pesos_modelos:
-                self.pesos_modelos[nome] /= total
-        else:
-            # Distribuição uniforme se todos zero
-            for nome in self.pesos_modelos:
-                self.pesos_modelos[nome] = 1.0 / len(self.pesos_modelos)
-
-        logger.info(f"Pesos dos modelos: {self.pesos_modelos}")
-
-    def calibrar_threshold_operacional(self, X: pd.DataFrame, y: pd.Series):
-        """Calibra threshold operacional baseado em Brier Score."""
-        probas = self.predict_proba(X)
-        brier_scores = []
-        thresholds = np.linspace(0.4, 0.6, 21)
-
-        for threshold in thresholds:
-            preds_binarias = (probas > threshold).astype(int)
-            brier_scores.append(brier_score_loss(y, probas))
-
-        melhor_threshold = thresholds[np.argmin(brier_scores)]
-        self.threshold_operacional = melhor_threshold
-
-        logger.info(f"Threshold operacional calibrado: {melhor_threshold:.3f}")
-
-    def _treinar_meta_modelo(self, X: pd.DataFrame, y: pd.Series):
-        """Treina meta-modelo para combinar previsões."""
-        probas_modelos = self._obter_probas_modelos(X)
-
-        self.meta_modelo = LogisticRegression(random_state=self.random_state)
-        self.meta_modelo.fit(probas_modelos, y)
-        logger.info("Meta-modelo treinado com sucesso")
-
-    def _obter_probas_modelos(self, X: pd.DataFrame) -> np.ndarray:
-        """Obtém probabilidades de todos os modelos."""
-        probas_modelos = []
-
-        for nome, modelo in self.modelos_treinados.items():
-            X_scaled = self.scalers[nome].transform(X)
-            proba = modelo.predict_proba(X_scaled)[:, 1]
-            probas_modelos.append(proba)
-
-        return np.column_stack(probas_modelos)
-
-    def _avaliar_performance(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series) -> Dict[str, Any]:
-        """Avalia performance do modelo no conjunto de holdout."""
-        probas = self.predict_proba(X)
-        preds = (probas > self.threshold_operacional).astype(int)
-
-        # Métricas básicas
-        acuracia = accuracy_score(y, preds)
-        precisao = np.mean(preds == 1) if np.any(preds == 1) else 0
-
-        # Backtest
-        df_sinais = pd.DataFrame({
-            'preco': precos.values,
-            'proba': probas,
-            'pred': preds
-        })
+        optuna.logging.set_verbosity(optuna.logging.ERROR)
 
         risk_analyzer = RiskAnalyzer()
-        metricas_risco = risk_analyzer.backtest_sinais(df_sinais)
+
+        def objective(trial: optuna.Trial) -> float:
+            params = {
+                'objective': 'multiclass',
+                'num_class': 3,
+                'metric': 'multi_logloss',
+                'boosting_type': 'gbdt',
+                'n_estimators': trial.suggest_int('n_estimators', 200, 800),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+                'num_leaves': trial.suggest_int('num_leaves', 8, 32),  # Reduzido para evitar overfit
+                'lambda_l1': trial.suggest_float('lambda_l1', 1.0, 10.0, log=True),  # L1 mais forte
+                'lambda_l2': trial.suggest_float('lambda_l2', 1.0, 10.0, log=True),  # L2 mais forte
+                'feature_fraction': trial.suggest_float('feature_fraction', 0.5, 0.9),
+                'bagging_fraction': trial.suggest_float('bagging_fraction', 0.5, 0.9),
+                'min_child_samples': trial.suggest_int('min_child_samples', 50, 150),
+                'random_state': self.random_state,
+                'n_jobs': -1,
+                'verbose': -1,
+            }
+
+            threshold = trial.suggest_float('threshold', 0.45, 0.65)
+
+            sharpe_scores = []
+            for train_idx, val_idx in cv_gen.split(X):
+                if len(train_idx) < 100 or len(val_idx) < 20:
+                    continue
+
+                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+                y_train, y_val_enc = y.iloc[train_idx], y.iloc[val_idx]
+                precos_val = precos.iloc[val_idx]
+
+                model = lgb.LGBMClassifier(**params, class_weight='balanced')
+                model.fit(X_train, y_train,
+                          eval_set=[(X_val, y_val_enc)],
+                          eval_metric='multi_logloss',
+                          callbacks=[lgb.early_stopping(50, verbose=False)])
+
+                # Prever probabilidades para a classe de ALTA (1)
+                idx_classe_1 = np.where(self.label_encoder.classes_ == 1)[0][0]
+                probas_val = model.predict_proba(X_val)[:, idx_classe_1]
+
+                # Gerar sinais e fazer backtest no fold de validação
+                sinais = (probas_val > threshold).astype(int)
+                df_sinais = pd.DataFrame({'preco': precos_val.values, 'sinal': sinais}, index=precos_val.index)
+                backtest_results = risk_analyzer.backtest_sinais(df_sinais, verbose=False)
+
+                sharpe_scores.append(backtest_results.get('sharpe', -1.0))
+
+            return np.mean(sharpe_scores) if sharpe_scores else -1.0
+
+        study = optuna.create_study(direction='maximize')
+        study.optimize(objective, n_trials=Params.OPTUNA_N_TRIALS, timeout=Params.OPTUNA_TIMEOUT_SECONDS)
+
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+        logger.info(f"Melhor Sharpe Ratio da otimização: {study.best_value:.4f}")
+        return study.best_params
+
+    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, t1: pd.Series) -> Dict[str, Any]:
+        """Executa o pipeline completo de treinamento com metodologia robusta."""
+        logger.info("Iniciando pipeline de treinamento do modelo multiclasse...")
+
+        if not ValidadorDados.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
+            raise ValueError("Dados de treinamento inválidos ou insuficientes.")
+
+        y_encoded = pd.Series(self.label_encoder.fit_transform(y), index=y.index)
+        self.features_selecionadas = self._selecionar_features(X, y_encoded)
+
+        if not self.features_selecionadas:
+            logger.error("Nenhuma feature selecionada - abortando treinamento")
+            return {}
+
+        X_selecionado = X[self.features_selecionadas]
+
+        self.scaler.fit(X_selecionado)
+        X_scaled = pd.DataFrame(self.scaler.transform(X_selecionado),
+                                index=X_selecionado.index,
+                                columns=self.features_selecionadas)
+
+        cv_gen = PurgedKFoldCV(n_splits=Params.N_SPLITS_CV, t1=t1, purge_days=Params.PURGE_DAYS)
+
+        best_params = self._otimizar_com_optuna(X_scaled, y_encoded, precos, cv_gen)
+        if not best_params:
+            logger.error("Otimização falhou - usando parâmetros padrão")
+            best_params = {}
+
+        final_params = {
+            'objective': 'multiclass',
+            'num_class': 3,
+            'boosting_type': 'gbdt',
+            'n_estimators': 1000,
+            'random_state': self.random_state,
+            'n_jobs': -1,
+            'verbose': -1,
+            **best_params
+        }
+
+        logger.info("Treinando modelo final com os melhores parâmetros em todos os dados...")
+        self.modelo_final = lgb.LGBMClassifier(**final_params, class_weight='balanced')
+        self.modelo_final.fit(X_scaled, y_encoded)
+
+        # Avaliação (simulada em um último fold)
+        all_splits = list(cv_gen.split(X_scaled))
+        if not all_splits:
+            logger.error("Não foi possível criar splits de validação cruzada.")
+            return {}
+
+        train_idx, test_idx = all_splits[-1]
+        y_test_orig = y.iloc[test_idx]
+        X_test_scaled = X_scaled.iloc[test_idx]
+
+        metricas = self._avaliar_performance(X_test_scaled, y_test_orig)
+        self.threshold_operacional = self._calibrar_threshold(X_scaled, y_encoded, cv_gen)
+        logger.info(f"Threshold operacional calibrado para: {self.threshold_operacional:.3f}")
+
+        self.cv_gen = cv_gen
+        self.X_scaled = X_scaled
+
+        return metricas
+
+    def _avaliar_performance(self, X_test: pd.DataFrame, y_test_orig: pd.Series) -> Dict[str, Any]:
+        """Avalia a performance do modelo de forma robusta para problema multiclasse."""
+        preds_encoded = self.modelo_final.predict(X_test)
+        preds_orig = self.label_encoder.inverse_transform(preds_encoded)
+
+        # Métricas para problema multiclasse
+        acuracia = accuracy_score(y_test_orig, preds_orig)
+        f1_macro = f1_score(y_test_orig, preds_orig, average='macro', zero_division=0)
+
+        # Foco específico na classe 1 (alta)
+        y_true_binary = (y_test_orig == 1).astype(int)
+        y_pred_binary = (preds_orig == 1).astype(int)
+        f1_classe_1 = f1_score(y_true_binary, y_pred_binary, zero_division=0)
 
         metricas = {
             'acuracia': acuracia,
-            'precisao': precisao,
-            'trades': metricas_risco['trades'],
-            'retorno_total': metricas_risco['retorno_total'],
-            'sharpe': metricas_risco['sharpe'],
-            'max_drawdown': metricas_risco['max_drawdown'],
-            'brier_score': brier_score_loss(y, probas)
+            'f1_macro': f1_macro,
+            'f1_score': f1_classe_1  # Manter f1_score para a classe 1 para compatibilidade
         }
 
-        logger.info(f"Performance no holdout - Acurácia: {acuracia:.3f}, Sharpe: {metricas_risco['sharpe']:.2f}")
+        logger.info(
+            f"Performance no teste - Acurácia: {acuracia:.3f}, "
+            f"F1-Macro: {f1_macro:.3f}, F1-Classe1: {f1_classe_1:.3f}"
+        )
         return metricas
 
+    def _calibrar_threshold(self, X: pd.DataFrame, y_enc: pd.Series, cv_gen: PurgedKFoldCV) -> float:
+        """Calibra threshold médio em múltiplos folds para maior robustez."""
+        thresholds = []
+        for train_idx, val_idx in cv_gen.split(X, y_enc):
+            probas = self.predict_proba(X.iloc[val_idx])
+            y_binary = (self.label_encoder.inverse_transform(y_enc.iloc[val_idx]) == 1).astype(int)
+            best_f1, best_thr = 0, 0.5
+            for thr in np.arange(0.2, 0.6, 0.01):
+                preds = (probas > thr).astype(int)
+                f1 = f1_score(y_binary, preds, zero_division=0)
+                if f1 > best_f1:
+                    best_f1, best_thr = f1, thr
+            thresholds.append(best_thr)
+        return float(np.mean(thresholds)) if thresholds else 0.5
+
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
-        """Prediz probabilidades usando ensemble ponderado."""
-        if not self.modelos_treinados:
-            raise ValueError("Modelos não treinados. Execute treinar() primeiro.")
+        """Prevê a probabilidade da classe de alta (1)."""
+        if self.modelo_final is None: raise RuntimeError("O modelo não foi treinado.")
+        if isinstance(X, np.ndarray): X = pd.DataFrame(X, columns=self.features_selecionadas)
+        X_scaled = self.scaler.transform(X[self.features_selecionadas])
+        idx_classe_1 = np.where(self.label_encoder.classes_ == 1)[0][0]
+        return self.modelo_final.predict_proba(X_scaled)[:, idx_classe_1]
 
-        X_selecionado = X[self.features_selecionadas]
-        probas_modelos = self._obter_probas_modelos(X_selecionado)
+    def prever_direcao(self, X_novo: pd.DataFrame, ticker: str) -> Dict[str, Any]:
+        """Realiza uma previsão completa para um novo dado."""
+        try:
+            proba = self.predict_proba(X_novo.tail(1))[-1]
 
-        if self.meta_modelo:
-            return self.meta_modelo.predict_proba(probas_modelos)[:, 1]
-        else:
-            # Combinação linear ponderada
-            proba_final = np.zeros(len(X_selecionado))
+            # Lógica simplificada: a predição já é a decisão.
+            predicao = 1 if proba >= self.threshold_operacional else 0
 
-            for nome, peso in self.pesos_modelos.items():
-                X_scaled = self.scalers[nome].transform(X_selecionado)
-                proba = self.modelos_treinados[nome].predict_proba(X_scaled)[:, 1]
-                proba_final += peso * proba
+            # A recomendação de operar é simplesmente se a predição for de alta.
+            should_operate = bool(predicao == 1)
 
-            return proba_final
-
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        """Prediz classes usando threshold operacional."""
-        probas = self.predict_proba(X)
-        return (probas > self.threshold_operacional).astype(int)
-
-    def prever_direcao(self, X_novo: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Faz previsão para novos dados.
-        Retorna: probabilidade, predição e se deve operar.
-        """
-        if not hasattr(self, 'features_selecionadas') or not self.features_selecionadas:
-            raise ValueError("Modelo não foi treinado ainda. Chame o método treinar() primeiro.")
-
-        # Selecionar apenas as features usadas no treino
-        X_selecionado = X_novo[self.features_selecionadas].reset_index(drop=True)
-
-        # Calcular probabilidades do ensemble
-        proba = np.array(self.predict_proba(X_selecionado)).ravel()
-
-        # Fazer predição binária
-        pred = (proba > self.threshold_operacional).astype(int).ravel()
-
-        # Decidir se deve operar
-        should_operate = bool((proba[-1] >= self.confidence_operar) and (pred[-1] == 1))
-
-        resultado = {
-            'probabilidade': float(proba[-1].item()),
-            'predicao': int(pred[-1]),
-            'should_operate': should_operate,
-            'threshold_operacional': float(self.threshold_operacional),
-            'limiar_confianca': float(self.confidence_operar)
-        }
-
-        # Salvar no banco de dados
-        self.db.salvar_previsao({
-            'probabilidade': float(proba[-1].item()),
-            'predicao': int(pred[-1]),
-            'metadados': {
+            return {
+                'probabilidade': float(proba),
+                'predicao': int(predicao),
                 'should_operate': should_operate,
-                'threshold_operacional': self.threshold_operacional,
-                'limiar_confianca': self.confidence_operar
+                'threshold_operacional': float(self.threshold_operacional),
+                # Manter o 'limiar_confianca' apenas para informação
+                'limiar_confianca': Params.CONFIDENCE_THRESHOLDS.get(ticker, Params.CONFIDENCE_THRESHOLDS["DEFAULT"]),
+                'status': 'sucesso'
             }
-        })
+        except Exception as e:
+            logger.error(f"Erro ao prever direção: {e}", exc_info=True)
+            return {'status': f'erro: {str(e)}', 'probabilidade': 0.5, 'predicao': 0, 'should_operate': False}
 
-        logger.info(f"Previsão realizada - Direção: {'ALTA' if pred[-1] == 1 else 'BAIXA'}, "
-                    f"Confiança: {proba[-1]:.1%}, Operar: {should_operate}")
-        return resultado
+    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, ticker: str) -> pd.DataFrame:
+        """Gera sinais de trading com filtro de confiança."""
 
-    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series,
-                              retornar_dataframe: bool = False) -> Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]]:
-        """
-        Gera sinais de trading baseados nas previsões do modelo.
-        """
-        X_selecionado = X[self.features_selecionadas].reset_index(drop=True)
-        proba = np.array(self.predict_proba(X_selecionado)).ravel()
-        pred = (proba > self.threshold_operacional).astype(int).ravel()
+        probas = self.predict_proba(X)
+        sinais = (probas >= self.threshold_operacional).astype(int)
 
-        conf = proba
-        high_conf = np.mean(conf >= self.confidence_operar)
-
-        meta = {
-            'ultimo_preco': float(precos.iloc[-1].item()) if len(precos) else None,
-            'n_amostras': len(X_selecionado),
-            'cobertura_alta_conf': float(high_conf),
-            'threshold_operacional': float(self.threshold_operacional)
-        }
-
-        self.db.salvar_previsao({
-            'predicao': int(pred[-1]) if len(pred) else None,
-            'probabilidade': float(proba[-1].item()) if len(proba) else None,
-            'metadados': meta
-        })
-
-        if retornar_dataframe:
-            df = pd.DataFrame({
-                'preco': precos.reset_index(drop=True).astype(float).to_numpy().ravel(),
-                'proba': proba.ravel(),
-                'pred': pred.ravel()
-            })
-            return df
-
-        return pred, proba
-
-    def operar(self, X: pd.DataFrame) -> Tuple[int, float]:
-        """Decide se deve operar baseado na confiança da previsão."""
-        proba = self.predict_proba(X)
-
-        if len(proba) == 0:
-            return 0, 0.0
-
-        proba_final = proba[0]
-
-        if abs(proba_final - 0.5) < (self.confidence_operar - 0.5):
-            # Confiança insuficiente
-            return 0, proba_final
-        else:
-            # Operar com direção baseada no threshold
-            direcao = 1 if proba_final > self.threshold_operacional else -1
-            return direcao, proba_final
+        return pd.DataFrame({'preco': precos.values, 'sinal': sinais}, index=precos.index)

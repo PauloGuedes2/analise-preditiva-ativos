@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -14,6 +15,7 @@ class DatabaseManager:
 
     def __init__(self, db_path: str = None):
         self.db_path = db_path or Params.PATH_DB_METADATA
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._criar_tabelas()
         logger.info(f"DatabaseManager inicializado com banco: {self.db_path}")
 
