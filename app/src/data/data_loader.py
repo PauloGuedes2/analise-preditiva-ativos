@@ -175,4 +175,4 @@ class DataLoader:
 
         except Exception as e:
             logger.error(f"Erro ao atualizar dados para {ticker}: {e}")
-            raise  # Levanta a exceção para que a camada superior (UI, updater) possa tratá-la
+            raise

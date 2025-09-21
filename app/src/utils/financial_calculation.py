@@ -18,7 +18,7 @@ class CalculosFinanceiros:
 
     @staticmethod
     def calcular_stochastic(fechamento: pd.Series, alta: pd.Series,
-                            baixa: pd.Series, periodo: int = 14) -> pd.Series:
+                         baixa: pd.Series, periodo: int = 14) -> pd.Series:
         menor_baixa = baixa.rolling(window=periodo).min()
         maior_alta = alta.rolling(window=periodo).max()
         denominador = maior_alta - menor_baixa
@@ -60,7 +60,7 @@ class CalculosFinanceiros:
 
     @staticmethod
     def calcular_cmf(alta: pd.Series, baixa: pd.Series, fechamento: pd.Series,
-                     volume: pd.Series, periodo: int = 20) -> pd.Series:
+                      volume: pd.Series, periodo: int = 20) -> pd.Series:
         """Calcula o Chaikin Money Flow (CMF)."""
         multiplicador_mf = ((fechamento - baixa) - (alta - fechamento)) / (alta - baixa + 1e-9)
         volume_mf = multiplicador_mf * volume
@@ -93,9 +93,26 @@ class CalculosEstatisticos:
     @staticmethod
     def calcular_sharpe_ratio(retornos: np.ndarray, dias_anuais: int = 252) -> float:
         """Calcula o Sharpe Ratio anualizado."""
-        if len(retornos) == 0 or np.std(retornos) == 0:
+        if len(retornos) < 2 or np.std(retornos) == 0:
             return 0.0
         return (np.mean(retornos) / np.std(retornos)) * np.sqrt(dias_anuais)
+
+    @staticmethod
+    def calcular_sortino_ratio(retornos: np.ndarray, dias_anuais: int = 252) -> float:
+        """Calcula o Sortino Ratio anualizado, focando no risco de perdas."""
+        if len(retornos) < 2:
+            return 0.0
+
+        retornos_negativos = retornos[retornos < 0]
+        if len(retornos_negativos) < 2:
+            return np.inf if np.mean(retornos) > 0 else 0.0
+
+        downside_std = np.std(retornos_negativos)
+        if downside_std == 0:
+            return np.inf if np.mean(retornos) > 0 else 0.0
+
+        sortino = (np.mean(retornos) / downside_std) * np.sqrt(dias_anuais)
+        return float(sortino)
 
     @staticmethod
     def calcular_drawdown(curva_equidade: np.ndarray) -> float:
