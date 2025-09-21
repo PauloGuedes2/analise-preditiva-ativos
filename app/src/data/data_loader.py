@@ -63,38 +63,34 @@ class DataLoader:
 
     def baixar_dados_yf(self, ticker: str, periodo: str = None,
                         intervalo: str = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Baixa dados do ticker e do IBOVESPA com tratamento de erro robusto."""
+        """Baixa dados do ticker e do IBOVESPA e os salva no BD."""
         periodo = periodo or Params.PERIODO_DADOS
         intervalo = intervalo or Params.INTERVALO_DADOS
 
-        try:
-            logger.info(f"Baixando dados para {ticker} - Período: {periodo}, Intervalo: {intervalo}")
+        logger.info(f"Baixando dados para {ticker} - Período: {periodo}, Intervalo: {intervalo}")
 
-            # Tentar baixar primeiro apenas o ticker principal
-            try:
-                dados_completos = yf.download(
-                    f"{ticker} ^BVSP",
-                    period=periodo,
-                    interval=intervalo,
-                    progress=False,
-                    auto_adjust=True,
-                    timeout=30  # Aumentar timeout
-                )
-            except Exception as e:
-                logger.warning(f"Erro ao baixar IBOV junto, tentando apenas {ticker}: {e}")
-                # Se falhar, baixar apenas o ticker principal
-                dados_ticker = yf.download(ticker, period=periodo, interval=intervalo,
-                                           progress=False, auto_adjust=True, timeout=30)
-                df_ticker = dados_ticker[['Open', 'High', 'Low', 'Close', 'Volume']]
-                df_ibov = pd.DataFrame()  # DataFrame vazio para IBOV
-                self.salvar_ohlcv(ticker, df_ticker)
-                return df_ticker, df_ibov
+        try:
+            dados_completos = yf.download(
+                f"{ticker} ^BVSP",
+                period=periodo,
+                interval=intervalo,
+                progress=False,
+                auto_adjust=True,
+                timeout=30
+            )
+
+            if dados_completos.empty or ticker not in dados_completos['Close'].columns:
+                raise ValueError(f"Nenhum dado retornado para o ticker {ticker}.")
 
             df_ticker, df_ibov = self._processar_dados_yfinance(dados_completos, ticker)
             self.salvar_ohlcv(ticker, df_ticker)
 
             logger.info(f"Dados baixados - {ticker}: {len(df_ticker)} registros")
             return df_ticker, df_ibov
+
+        except Exception as e:
+            logger.error(f"Erro crítico ao baixar dados do yfinance para {ticker}: {e}")
+            raise
 
         except Exception as e:
             logger.error(f"Erro crítico ao baixar dados do yfinance: {e}")
