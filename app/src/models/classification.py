@@ -66,9 +66,7 @@ class ClassificadorTrading:
         str, Any]:
         """Otimiza hiperparâmetros do LightGBM usando Optuna, focando no Sharpe Ratio."""
         logger.info("Iniciando otimização com Optuna focada em Sharpe Ratio...")
-
         optuna.logging.set_verbosity(optuna.logging.ERROR)
-
         risk_analyzer = RiskAnalyzer()
 
         def objective(trial: optuna.Trial) -> float:
@@ -77,11 +75,11 @@ class ClassificadorTrading:
                 'num_class': 3,
                 'metric': 'multi_logloss',
                 'boosting_type': 'gbdt',
-                'n_estimators': trial.suggest_int('n_estimators', 200, 800),
+                'n_estimators': trial.suggest_int('n_estimators', 150, 1000),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-                'num_leaves': trial.suggest_int('num_leaves', 8, 32),  # Reduzido para evitar overfit
-                'lambda_l1': trial.suggest_float('lambda_l1', 1.0, 10.0, log=True),  # L1 mais forte
-                'lambda_l2': trial.suggest_float('lambda_l2', 1.0, 10.0, log=True),  # L2 mais forte
+                'num_leaves': trial.suggest_int('num_leaves', 8, 32),
+                'lambda_l1': trial.suggest_float('lambda_l1', 1.0, 10.0, log=True),
+                'lambda_l2': trial.suggest_float('lambda_l2', 1.0, 10.0, log=True),
                 'feature_fraction': trial.suggest_float('feature_fraction', 0.5, 0.9),
                 'bagging_fraction': trial.suggest_float('bagging_fraction', 0.5, 0.9),
                 'min_child_samples': trial.suggest_int('min_child_samples', 50, 150),
@@ -89,7 +87,6 @@ class ClassificadorTrading:
                 'n_jobs': -1,
                 'verbose': -1,
             }
-
             threshold = trial.suggest_float('threshold', 0.45, 0.65)
 
             sharpe_scores = []
@@ -107,11 +104,9 @@ class ClassificadorTrading:
                           eval_metric='multi_logloss',
                           callbacks=[lgb.early_stopping(50, verbose=False)])
 
-                # Prever probabilidades para a classe de ALTA (1)
                 idx_classe_1 = np.where(self.label_encoder.classes_ == 1)[0][0]
                 probas_val = model.predict_proba(X_val)[:, idx_classe_1]
 
-                # Gerar sinais e fazer backtest no fold de validação
                 sinais = (probas_val > threshold).astype(int)
                 df_sinais = pd.DataFrame({'preco': precos_val.values, 'sinal': sinais}, index=precos_val.index)
                 backtest_results = risk_analyzer.backtest_sinais(df_sinais, verbose=False)
@@ -120,9 +115,18 @@ class ClassificadorTrading:
 
             return np.mean(sharpe_scores) if sharpe_scores else -1.0
 
-        study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=Params.OPTUNA_N_TRIALS, timeout=Params.OPTUNA_TIMEOUT_SECONDS)
+        # --- Criação do Estudo Optuna ---
 
+        # MODO 1: APRESENTAÇÃO (Resultados 100% Reprodutíveis)
+        # Usa um 'sampler' com uma semente fixa para garantir que a busca seja sempre a mesma.
+        sampler = optuna.samplers.TPESampler(seed=self.random_state)
+        study = optuna.create_study(direction='maximize', sampler=sampler)
+
+        # MODO 2: PESQUISA (Resultados Variáveis para Análise de Robustez)
+        # Para usar, comente as duas linhas acima e descomente a linha abaixo.
+        # study = optuna.create_study(direction='maximize')
+
+        study.optimize(objective, n_trials=Params.OPTUNA_N_TRIALS, timeout=Params.OPTUNA_TIMEOUT_SECONDS)
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
         logger.info(f"Melhor Sharpe Ratio da otimização: {study.best_value:.4f}")
@@ -255,12 +259,10 @@ class ClassificadorTrading:
                 'predicao': int(predicao),
                 'should_operate': should_operate,
                 'threshold_operacional': float(self.threshold_operacional),
-                # Manter o 'limiar_confianca' apenas para informação
-                'limiar_confianca': Params.CONFIDENCE_THRESHOLDS.get(ticker, Params.CONFIDENCE_THRESHOLDS["DEFAULT"]),
                 'status': 'sucesso'
             }
         except Exception as e:
-            logger.error(f"Erro ao prever direção: {e}", exc_info=True)
+            logger.error(f"Erro ao prever direção: {e}")
             return {'status': f'erro: {str(e)}', 'probabilidade': 0.5, 'predicao': 0, 'should_operate': False}
 
     def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, ticker: str) -> pd.DataFrame:
