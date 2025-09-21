@@ -91,7 +91,9 @@ class DashboardTrading:
 
         with st.spinner("Gerando gráficos da simulação..."):
             risk_analyzer = RiskAnalyzer()
-            df_sinais = self.modelo_carregado.prever_e_gerar_sinais(X_full, precos_full, self.ticker_selecionado)
+            threshold_simulacao = self.modelo_carregado.threshold_operacional * 0.95  # Usa 95% do threshold original
+            df_sinais = self.modelo_carregado.prever_e_gerar_sinais(X_full, precos_full, self.ticker_selecionado,
+                                                                    threshold_override=threshold_simulacao)
             backtest_info = risk_analyzer.backtest_sinais(df_sinais)
 
         fig_precos = self._criar_grafico_precos_sinais(df_sinais, precos_full)

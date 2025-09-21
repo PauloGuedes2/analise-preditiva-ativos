@@ -265,10 +265,12 @@ class ClassificadorTrading:
             logger.error(f"Erro ao prever direção: {e}")
             return {'status': f'erro: {str(e)}', 'probabilidade': 0.5, 'predicao': 0, 'should_operate': False}
 
-    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, ticker: str) -> pd.DataFrame:
+    def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, ticker: str,
+                              threshold_override: float = None) -> pd.DataFrame:
         """Gera sinais de trading com filtro de confiança."""
 
+        threshold = threshold_override if threshold_override is not None else self.threshold_operacional
         probas = self.predict_proba(X)
-        sinais = (probas >= self.threshold_operacional).astype(int)
+        sinais = (probas >= threshold).astype(int)
 
         return pd.DataFrame({'preco': precos.values, 'sinal': sinais}, index=precos.index)
