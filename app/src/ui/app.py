@@ -248,8 +248,6 @@ class DashboardTrading:
             X_last = X_full[self.modelo_carregado.features_selecionadas].tail(1)
             X_last_scaled = self.modelo_carregado.scaler.transform(X_last)
 
-            # --- CORREÇÃO APLICADA AQUI ---
-
             # 1. Obter o objeto de explicação SHAP bruto para a última amostra.
             #    Ele contém as explicações para todas as classes.
             shap_explanation_raw = self.modelo_carregado.shap_explainer(X_last_scaled)
