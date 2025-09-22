@@ -147,6 +147,9 @@ class DashboardTrading:
         with col1:
             st.markdown(
                 f"Para o próximo pregão, o modelo sinaliza **{recomendacao}** para o ativo **{self.ticker_selecionado}**.")
+
+            st.metric("Data da Previsão", next_date)
+
             st.metric("Confiança do Modelo na Alta", f"{probabilidade:.1%}",
                       help="Probabilidade estimada pelo modelo para um movimento de alta, conforme definido pela estratégia da Tripla Barreira.")
             st.metric("Limiar Mínimo para Operar", f"{self.modelo_carregado.threshold_operacional:.1%}",
@@ -185,6 +188,10 @@ class DashboardTrading:
             recomendacao = "🟢 **OPORTUNIDADE**" if previsao['should_operate'] else "🟡 **OBSERVAR**"
             st.markdown("##### Sinal para o Próximo Pregão")
             st.markdown(f"<h1>{recomendacao}</h1>", unsafe_allow_html=True)
+
+            proximo_dia_util = (precos_full.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
+            st.metric("Data da Previsão", proximo_dia_util)
+
             probabilidade = previsao['probabilidade']
             st.progress(probabilidade, text=f"{probabilidade:.1%} de Confiança na Alta")
         st.divider()
