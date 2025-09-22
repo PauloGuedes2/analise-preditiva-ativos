@@ -22,8 +22,7 @@ class RiskAnalyzer:
 
     def backtest_sinais(self, df_sinais: pd.DataFrame, verbose: bool = True) -> Dict[str, Any]:
         if df_sinais.empty or 'sinal' not in df_sinais.columns or df_sinais['sinal'].sum() == 0:
-            if verbose:
-                logger.warning("Backtest não executado: sem sinais de operação.")
+            if verbose: logger.warning("Backtest não executado: sem sinais de operação.")
             return self._retornar_metricas_vazias()
 
         if not isinstance(df_sinais.index, pd.DatetimeIndex):
@@ -34,39 +33,29 @@ class RiskAnalyzer:
         df['posicao'] = df['sinal'].diff().fillna(0)
         trades = df[df['posicao'] != 0].copy()
 
-        if trades.empty or trades['posicao'].iloc[0] == -1:
-            return self._retornar_metricas_vazias()
-
-        if trades['posicao'].iloc[-1] == 1:
-            trades = trades.iloc[:-1]
+        if trades.empty or trades['posicao'].iloc[0] == -1: return self._retornar_metricas_vazias()
+        if trades['posicao'].iloc[-1] == 1: trades = trades.iloc[:-1]
 
         entradas = trades[trades['posicao'] == 1]['preco']
         saidas = trades[trades['posicao'] == -1]['preco']
 
-        if len(entradas) > len(saidas):
-            entradas = entradas.iloc[:len(saidas)]
+        if len(entradas) > len(saidas): entradas = entradas.iloc[:len(saidas)]
 
         retornos = (saidas.values / entradas.values) - 1 - (self.custo_por_trade * 2)
 
-        if len(retornos) == 0:
-            return self._retornar_metricas_vazias()
+        if len(retornos) == 0: return self._retornar_metricas_vazias()
 
         lucros = retornos[retornos > 0]
         perdas = retornos[retornos < 0]
-
         soma_lucros = np.sum(lucros)
         soma_perdas = np.abs(np.sum(perdas))
-
         profit_factor = soma_lucros / soma_perdas if soma_perdas > 0 else np.inf
-
         avg_win = np.mean(lucros) if len(lucros) > 0 else 0
         avg_loss = np.abs(np.mean(perdas)) if len(perdas) > 0 else 0
-
         payoff_ratio = avg_win / avg_loss if avg_loss > 0 else np.inf
 
         curva_equidade = np.cumprod(1 + retornos)
         capital_total = np.insert(curva_equidade, 0, 1)
-
         pico = np.maximum.accumulate(capital_total)
         drawdown_series = (capital_total - pico) / pico
 
@@ -74,7 +63,7 @@ class RiskAnalyzer:
             'retorno_total': float(curva_equidade[-1] - 1),
             'trades': len(retornos),
             'sharpe': self.calculos.calcular_sharpe_ratio(retornos),
-            'sortino': self.calculos.calcular_sortino_ratio(retornos),  # <-- NOVA MÉTRICA
+            'sortino': self.calculos.calcular_sortino_ratio(retornos),
             'max_drawdown': float(np.min(drawdown_series)),
             'win_rate': np.sum(retornos > 0) / len(retornos),
             'equity_curve': capital_total.tolist(),
@@ -84,7 +73,6 @@ class RiskAnalyzer:
             'drawdown_series': drawdown_series.tolist()
         }
 
-        if verbose:
-            logger.info(
-                f"Backtest: {metricas['trades']} trades, Retorno: {metricas['retorno_total']:.2%}, Sharpe: {metricas['sharpe']:.2f}")
+        if verbose: logger.info(
+            f"Backtest: {metricas['trades']} trades, Retorno: {metricas['retorno_total']:.2%}, Sharpe: {metricas['sharpe']:.2f}")
         return metricas

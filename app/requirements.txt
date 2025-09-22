@@ -6,10 +6,7 @@ yfinance
 streamlit
 plotly
 lightgbm
-xgboost
-catboost
 scipy
-imblearn
 optuna
 statsmodels
-tsfracdiff
+shap

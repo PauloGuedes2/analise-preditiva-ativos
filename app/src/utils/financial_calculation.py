@@ -18,7 +18,7 @@ class CalculosFinanceiros:
 
     @staticmethod
     def calcular_stochastic(fechamento: pd.Series, alta: pd.Series,
-                         baixa: pd.Series, periodo: int = 14) -> pd.Series:
+                          baixa: pd.Series, periodo: int = 14) -> pd.Series:
         menor_baixa = baixa.rolling(window=periodo).min()
         maior_alta = alta.rolling(window=periodo).max()
         denominador = maior_alta - menor_baixa
@@ -147,6 +147,6 @@ class CalculosEstatisticos:
 
     @staticmethod
     def calcular_correlacao_rolling(serie1: pd.Series, serie2: pd.Series,
-                                    janela: int = 20) -> pd.Series:
+                                     janela: int = 20) -> pd.Series:
         """Calcula correlação rolling entre duas séries."""
         return serie1.rolling(janela).corr(serie2)
