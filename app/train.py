@@ -94,7 +94,7 @@ class TreinadorModelos:
 
             # Engenharia de features e criação do dataset
             feature_engineer = FeatureEngineer()
-            X, y, precos, t1 = feature_engineer.preparar_dataset(df_ohlc, df_ibov, ticker)
+            X, y, precos, t1, _ = feature_engineer.preparar_dataset(df_ohlc, df_ibov, ticker)
 
             if X.empty or y.empty:
                 logger.error(f"Dataset vazio para {ticker} após engenharia de features.")

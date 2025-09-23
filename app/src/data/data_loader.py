@@ -1,6 +1,8 @@
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from typing import Tuple
 
 import pandas as pd
@@ -63,16 +65,40 @@ class DataLoader:
 
     def baixar_dados_yf(self, ticker: str, periodo: str = None,
                         intervalo: str = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Baixa dados do ticker e do IBOVESPA e os salva no BD."""
-        periodo = periodo or Params.PERIODO_DADOS
+        """
+        Baixa dados do yfinance de forma robusta, especificando datas de início
+        e fim para evitar erros de formatação de data relacionados à localidade do sistema.
+        """
         intervalo = intervalo or Params.INTERVALO_DADOS
+        periodo_config = periodo or Params.PERIODO_DADOS
 
-        logger.info(f"Baixando dados para {ticker} - Período: {periodo}, Intervalo: {intervalo}")
+        end_date = datetime.now() + timedelta(days=1)
+
+        match = re.match(r"(\d+)(\w+)", periodo_config)
+        if not match:
+            raise ValueError(f"Formato de período inválido: '{periodo_config}'. Use '4y', '6mo', '10d', etc.")
+
+        valor, unidade = int(match.group(1)), match.group(2).lower()
+
+        if unidade == 'y':
+            start_date = end_date - timedelta(days=valor * 365)
+        elif unidade in ['mo', 'm']:
+            start_date = end_date - timedelta(days=valor * 30)
+        elif unidade == 'd':
+            start_date = end_date - timedelta(days=valor)
+        else:
+            raise ValueError(f"Unidade de período não suportada: '{unidade}'. Use 'y', 'mo' ou 'd'.")
+
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+
+        logger.info(f"Baixando dados para {ticker} - De: {start_str} até {end_str}")
 
         try:
             dados_completos = yf.download(
-                f"{ticker} ^BVSP",
-                period=periodo,
+                tickers=f"{ticker} ^BVSP",
+                start=start_str,
+                end=end_str,
                 interval=intervalo,
                 progress=False,
                 auto_adjust=True,

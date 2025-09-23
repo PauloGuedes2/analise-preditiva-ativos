@@ -1,4 +1,4 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 
 class Params:
@@ -22,7 +22,7 @@ class Params:
     ATR_FACTORS: Dict[str, Tuple[float, float]] = {
         "DEFAULT": (1.5, 1.0),
         "PETR4.SA": (1.5, 1.0),
-        "ITSA4.SA": (1.5, 1.0),
+        "ITSA4.SA": (1.2, 0.8),
         "ITUB4.SA": (1.4, 1.0),
         "ELET3.SA": (1.2, 0.8),
         "VALE3.SA": (1.2, 0.8)

@@ -73,11 +73,12 @@ class DashboardTrading:
                 st.error(f"O modelo para {self.ticker_selecionado} não foi encontrado.")
                 return
             with st.spinner("Processando dados e gerando análise..."):
-                _, df_ibov, X_full, y_full, precos_full, previsao = self._processar_dados_e_previsao()
+                df_ticker, df_ibov, X_full, y_full, precos_full, previsao = self._processar_dados_e_previsao()
+
             if self.relatorio_btn:
-                self._render_relatorio_completo(previsao, X_full, y_full, precos_full, df_ibov)
+                self._render_relatorio_completo(previsao, X_full, y_full, precos_full, df_ibov, df_ticker)
             else:
-                self._render_analise_em_abas(previsao, X_full, y_full, precos_full, df_ibov)
+                self._render_analise_em_abas(previsao, X_full, y_full, precos_full, df_ibov, df_ticker)
         else:
             self._render_tela_boas_vindas()
 
@@ -94,9 +95,9 @@ class DashboardTrading:
         if df_ticker.empty:
             st.error(f"Não foi possível carregar dados para {self.ticker_selecionado}.")
             st.stop()
-        X_full, y_full, precos_full, _ = feature_engineer.preparar_dataset(df_ticker, df_ibov,
-                                                                           self.ticker_selecionado)
-        previsao = self.modelo_carregado.prever_direcao(X_full.tail(1), self.ticker_selecionado)
+        X_full, y_full, precos_full, _, X_untruncated = feature_engineer.preparar_dataset(df_ticker, df_ibov,
+                                                                                          self.ticker_selecionado)
+        previsao = self.modelo_carregado.prever_direcao(X_untruncated.tail(1), self.ticker_selecionado)
         return df_ticker, df_ibov, X_full, y_full, precos_full, previsao
 
     def _render_tela_boas_vindas(self):
@@ -122,22 +123,24 @@ class DashboardTrading:
                 "- **Não é uma Bola de Cristal:** Fatores macroeconômicos e notícias não estão no escopo do modelo.\n"
                 "- **Use como Ferramenta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
 
-    def _render_analise_em_abas(self, previsao, X_full, y_full, precos_full, df_ibov):
+    def _render_analise_em_abas(self, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):  # Adiciona df_ticker
         st.header(f"Análise Preditiva para {self.ticker_selecionado}")
         tabs = st.tabs(["🎯 **Resumo Executivo**", "🔍 **Análise da Previsão**", "🩺 **Saúde do Modelo**",
                         "📈 **Análise de Mercado**", "🧬 **DNA do Modelo**", "📊 **Simulação de Performance**"])
 
-        with tabs[0]: self._render_tab_resumo(previsao, precos_full)
+        with tabs[0]: self._render_tab_resumo(previsao, precos_full, df_ticker)
         with tabs[1]: self._render_tab_previsao_shap(X_full)
         with tabs[2]: self._render_tab_saude_modelo(X_full)
         with tabs[3]: self._render_tab_mercado(precos_full, df_ibov)
         with tabs[4]: self._render_tab_dna(y_full)
         with tabs[5]: self._render_tab_simulacao(X_full, precos_full)
 
-    def _render_relatorio_completo(self, previsao, X_full, y_full, precos_full, df_ibov):
+    def _render_relatorio_completo(self, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):
         st.title(f"📋 Relatório de Análise Preditiva: {self.ticker_selecionado}")
-        last_date = X_full.index[-1].strftime('%d/%m/%Y')
-        next_date = (X_full.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
+
+        last_date = df_ticker.index[-1].strftime('%d/%m/%Y')
+        next_date = (df_ticker.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
+
         st.caption(
             f"Relatório gerado em {datetime.now().strftime('%d/%m/%Y às %H:%M')} | Previsão para o pregão de {next_date}")
         st.header("1. Conclusão Executiva: Qual é o Veredito?")
@@ -178,8 +181,8 @@ class DashboardTrading:
         st.header("5. Metodologia e Glossário")
         self._render_glossario_metodologia()
 
-    # --- MÉTODOS DAS ABAS ---
-    def _render_tab_resumo(self, previsao: Dict[str, Any], precos_full: pd.Series):
+    def _render_tab_resumo(self, previsao: Dict[str, Any], precos_full: pd.Series,
+                           df_ticker: pd.DataFrame):  # Adiciona df_ticker
         st.subheader("Diagnóstico e Previsão")
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -189,7 +192,8 @@ class DashboardTrading:
             st.markdown("##### Sinal para o Próximo Pregão")
             st.markdown(f"<h1>{recomendacao}</h1>", unsafe_allow_html=True)
 
-            proximo_dia_util = (precos_full.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
+            proximo_dia_util = (df_ticker.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
+
             st.metric("Data da Previsão", proximo_dia_util)
 
             probabilidade = previsao['probabilidade']
@@ -248,7 +252,8 @@ class DashboardTrading:
             "Este gráfico de cascata (waterfall) mostra como cada variável (feature) contribuiu para a previsão final. Features em vermelho empurram a previsão para cima (mais chance de 'Oportunidade'), enquanto as azuis empurraram para baixo.")
 
         if not hasattr(self.modelo_carregado, 'shap_explainer') or self.modelo_carregado.shap_explainer is None:
-            st.warning("O explainer SHAP não foi encontrado neste modelo. É necessário retreinar o modelo para gerar esta análise.")
+            st.warning(
+                "O explainer SHAP não foi encontrado neste modelo. É necessário retreinar o modelo para gerar esta análise.")
             return
 
         with st.spinner("Calculando valores SHAP..."):
@@ -437,7 +442,7 @@ class DashboardTrading:
                                  line={'dash': 'dot', 'color': 'gray'}))
         if sinal_positivo:
             ultimo_preco = df_recente['Preço'].iloc[-1]
-            proximo_dia = df_recente.index[-1] + pd.Timedelta(days=1)
+            proximo_dia = df_recente.index[-1] + pd.tseries.offsets.BDay(1)
             fig.add_trace(go.Scatter(x=[proximo_dia], y=[ultimo_preco], mode='markers', name='Sinal de Oportunidade',
                                      marker=dict(color='green', size=15, symbol='circle',
                                                  line={'width': 2, 'color': 'darkgreen'})))

@@ -146,7 +146,7 @@ class FeatureEngineer:
         return labels, t1
 
     def preparar_dataset(self, df_ohlc: pd.DataFrame, df_ibov: Optional[pd.DataFrame], ticker: str) -> Tuple[
-        pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+        pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.DataFrame]:
         """Cria o dataset completo com features, labels e t1 para o modelo."""
         logger.info("Iniciando criação de features e dataset...")
 
@@ -159,11 +159,14 @@ class FeatureEngineer:
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
         df.dropna(inplace=True)
 
+        X_untruncated = df.copy()
+
         if df.empty:
             return (pd.DataFrame(),
                     pd.Series(dtype=int),
                     pd.Series(dtype=float),
-                    pd.Series(dtype=object))
+                    pd.Series(dtype=object),
+                    pd.DataFrame())
 
         # Criar labels usando os preços originais
         labels, t1 = self._criar_labels_tripla_barreira(
@@ -188,4 +191,4 @@ class FeatureEngineer:
         logger.info(f"Dataset preparado - X: {X.shape}, y: {y.shape}")
         logger.info(f"Distribuição de labels: {y.value_counts(normalize=True).to_dict()}")
 
-        return X, y, precos, t1
+        return X, y, precos, t1, X_untruncated
