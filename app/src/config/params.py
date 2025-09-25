@@ -51,7 +51,6 @@ class Params:
     # --- Configurações de Paths ---
     PATH_MODELOS: str = "modelos_treinados"  # Diretório para salvar modelos treinados
     PATH_DB_MERCADO: str = "dados/dados_mercado.db"  # Arquivo do banco de dados de mercado (OHLCV)
-    PATH_DB_METADATA: str = "dados/model_metadata.db"  # Arquivo do banco de dados de metadados
 
     # --- Configurações de Logging ---
     LOG_LEVEL: str = "INFO"  # Nível de log (DEBUG, INFO, WARNING, ERROR)

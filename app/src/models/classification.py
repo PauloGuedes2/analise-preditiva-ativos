@@ -14,7 +14,7 @@ import shap
 
 from src.config.params import Params
 from src.logger.logger import logger
-from src.utils.utils import ValidadorDados
+from src.utils.utils import Utils
 from src.models.validation import PurgedKFoldCV
 from src.utils.risk_analyzer import RiskAnalyzer
 
@@ -53,7 +53,7 @@ class ClassificadorTrading:
             Dict[str, Any]: Dicionário com as métricas de performance do modelo treinado.
         """
         logger.info("Iniciando pipeline de treinamento do modelo multiclasse...")
-        if not ValidadorDados.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
+        if not Utils.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
             raise ValueError("Dados de treinamento inválidos ou insuficientes.")
 
         # Prepara os dados
