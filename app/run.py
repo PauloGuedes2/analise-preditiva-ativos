@@ -6,6 +6,7 @@ class Run:
     """Classe responsável por rodar a aplicação Streamlit."""
 
     def __init__(self):
+        """Inicializa a classe, definindo os caminhos base do projeto."""
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.app_path = os.path.join(self.base_dir, "src", "ui", "app.py")
 

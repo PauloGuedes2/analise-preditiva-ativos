@@ -8,12 +8,13 @@ from src.logger.logger import logger
 
 
 class DataUpdater:
-    """Serviço para atualizar dados em background."""
+    """Serviço singleton para atualizar dados de mercado em uma thread de background."""
 
     _instance = None
-    _lock = threading.Lock()
+    _lock = threading.Lock() # Garante que a criação da instância seja thread-safe
 
     def __new__(cls):
+        # Implementação do padrão Singleton
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
@@ -21,37 +22,38 @@ class DataUpdater:
             return cls._instance
 
     def _inicializar(self):
+        """Inicializador interno para a instância singleton."""
         self.loader = DataLoader()
         self.ultima_atualizacao: Dict[str, datetime] = {}
         self.executando = False
         self.thread = None
 
     def iniciar_atualizacao_automatica(self, tickers: List[str], intervalo_minutos: int = 30):
-        """Inicia a atualização automática em background."""
+        """Inicia o processo de atualização automática em uma thread separada."""
         if self.executando:
-            return
+            return # Evita iniciar múltiplas threads
 
         self.executando = True
         self.thread = threading.Thread(
             target=self._loop_atualizacao,
             args=(tickers, intervalo_minutos),
-            daemon=True
+            daemon=True # Permite que o programa principal saia sem esperar a thread
         )
         self.thread.start()
         logger.info(f"Serviço de atualização automática iniciado (intervalo: {intervalo_minutos}min)")
 
     def _loop_atualizacao(self, tickers: List[str], intervalo_minutos: int):
-        """Loop principal de atualização."""
+        """Loop principal que executa a atualização em intervalos definidos."""
         while self.executando:
             try:
                 self.atualizar_todos_tickers(tickers)
                 time.sleep(intervalo_minutos * 60)
             except Exception as e:
                 logger.error(f"Erro no loop de atualização: {e}")
-                time.sleep(60)  # Espera 1 minuto em caso de erro
+                time.sleep(60)  # Espera 1 minuto antes de tentar novamente em caso de erro
 
     def atualizar_todos_tickers(self, tickers: List[str]):
-        """Atualiza todos os tickers da lista."""
+        """Itera sobre a lista de tickers e tenta atualizar cada um."""
         for ticker in tickers:
             try:
                 self.atualizar_ticker(ticker)
@@ -59,10 +61,14 @@ class DataUpdater:
                 logger.error(f"Erro ao atualizar {ticker}: {e}")
 
     def atualizar_ticker(self, ticker: str) -> bool:
-        """Atualiza dados de um ticker específico."""
+        """
+        Atualiza os dados para um ticker específico, se necessário.
+
+        A atualização só ocorre se a última atualização foi há mais de uma hora.
+        """
         agora = datetime.now()
 
-        # Verifica se precisa atualizar (mínimo 1 hora desde última atualização)
+        # Limita a frequência de atualização para no máximo uma vez por hora
         if (ticker in self.ultima_atualizacao and
                 (agora - self.ultima_atualizacao[ticker]).total_seconds() < 3600):
             return False
@@ -83,20 +89,11 @@ class DataUpdater:
             raise
 
     def parar_atualizacao(self):
-        """Para o serviço de atualização."""
+        """Sinaliza para a thread de atualização parar e aguarda sua finalização."""
         self.executando = False
         if self.thread:
             self.thread.join(timeout=5)
             logger.info("Serviço de atualização parado")
-
-    def verificar_necessidade_atualizacao(self, ticker: str) -> bool:
-        """Verifica se um ticker precisa ser atualizado."""
-        if ticker not in self.ultima_atualizacao:
-            return True
-
-        # Atualiza a cada hora no máximo
-        return (datetime.now() - self.ultima_atualizacao[ticker]).total_seconds() > 3600
-
 
 # Instância global
 data_updater = DataUpdater()

@@ -14,36 +14,39 @@ from joblib import load
 from scipy.stats import ks_2samp
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-# Importações do seu projeto
 from src.config.params import Params
 from src.data.data_loader import DataLoader
 from src.data.data_updater import data_updater
 from src.models.feature_engineer import FeatureEngineer
 from src.utils.risk_analyzer import RiskAnalyzer
 
-# Configuração da página
+# Configuração da página do Streamlit
 st.set_page_config(layout="wide", page_title="Análise Preditiva de Ativos", page_icon="📈")
 
 
 class DashboardTrading:
-    """Dashboard para Análise Preditiva de Ativos, com foco em clareza e metodologia."""
+    """Dashboard Streamlit para Análise Preditiva de Ativos"""
 
     def __init__(self):
+        """Inicializa o dashboard, o serviço de atualização de dados e a barra lateral."""
         self.modelo_carregado = None
         self.ticker_selecionado = None
         data_updater.iniciar_atualizacao_automatica(tickers=Params.TICKERS)
         self._inicializar_sidebar()
 
     def _inicializar_sidebar(self):
+        """Configura e renderiza a barra lateral com as opções de seleção."""
         with st.sidebar:
             st.markdown("## 📈 Análise Preditiva")
             st.markdown("---")
+            # Procura por arquivos de modelo no diretório configurado
             modelos_disponiveis = sorted(
                 [f.replace('modelo_', '').replace('.joblib', '') for f in os.listdir(Params.PATH_MODELOS) if
                  f.endswith('.joblib')])
             if not modelos_disponiveis:
                 st.warning("Nenhum modelo treinado foi encontrado.")
-                st.stop()
+                st.stop() # Encerra a execução se não houver modelos
+
             self.ticker_selecionado = st.selectbox("Selecione o Ativo:", modelos_disponiveis,
                                                    help="Escolha um dos modelos previamente treinados para análise.")
             st.markdown("---")
@@ -51,6 +54,7 @@ class DashboardTrading:
             self.analisar_btn = st.button("🔍 Análise Interativa (Dashboard)", use_container_width=True)
             self.relatorio_btn = st.button("📋 Gerar Relatório Completo", type="primary", use_container_width=True)
             st.markdown("---")
+
             with st.expander("Manutenção e Ajuda"):
                 if st.button("🔄 Forçar Reset dos Dados", use_container_width=True,
                              help="Apaga o banco de dados local para forçar o download de dados novos na próxima análise."):
@@ -58,15 +62,26 @@ class DashboardTrading:
 
     @st.cache_resource(ttl=3600, show_spinner="Carregando modelo...")
     def _carregar_modelo(_self, ticker: str) -> Optional[Any]:
+        """
+        Carrega o modelo treinado do disco, com cache para performance.
+
+        Args:
+            ticker (str): O ticker do modelo a ser carregado.
+
+        Returns:
+            Optional[Any]: O objeto do modelo carregado ou None se não encontrado.
+        """
         caminho = os.path.join(Params.PATH_MODELOS, f"modelo_{ticker}.joblib")
         if os.path.exists(caminho):
             try:
                 return load(caminho)
-            except Exception:
+            except Exception as e:
+                st.error(f"Erro ao carregar o modelo '{ticker}': {e}")
                 return None
         return None
 
     def executar(self):
+        """Função principal que orquestra a lógica e renderização do dashboard."""
         if self.analisar_btn or self.relatorio_btn:
             self.modelo_carregado = self._carregar_modelo(self.ticker_selecionado)
             if self.modelo_carregado is None:
@@ -75,6 +90,7 @@ class DashboardTrading:
             with st.spinner("Processando dados e gerando análise..."):
                 df_ticker, df_ibov, X_full, y_full, precos_full, previsao = self._processar_dados_e_previsao()
 
+            # Decide qual tipo de visualização renderizar
             if self.relatorio_btn:
                 self._render_relatorio_completo(previsao, X_full, y_full, precos_full, df_ibov, df_ticker)
             else:
@@ -83,6 +99,7 @@ class DashboardTrading:
             self._render_tela_boas_vindas()
 
     def _processar_dados_e_previsao(self):
+        """Baixa, processa os dados e gera a previsão usando o modelo carregado."""
         loader = DataLoader()
         feature_engineer = FeatureEngineer()
         try:
@@ -95,12 +112,13 @@ class DashboardTrading:
         if df_ticker.empty:
             st.error(f"Não foi possível carregar dados para {self.ticker_selecionado}.")
             st.stop()
-        X_full, y_full, precos_full, _, X_untruncated = feature_engineer.preparar_dataset(df_ticker, df_ibov,
-                                                                                          self.ticker_selecionado)
+        X_full, y_full, precos_full, _, X_untruncated = feature_engineer.preparar_dataset(df_ticker, df_ibov, self.ticker_selecionado)
         previsao = self.modelo_carregado.prever_direcao(X_untruncated.tail(1), self.ticker_selecionado)
         return df_ticker, df_ibov, X_full, y_full, precos_full, previsao
 
-    def _render_tela_boas_vindas(self):
+    @staticmethod
+    def _render_tela_boas_vindas():
+        """Renderiza a tela inicial de boas-vindas com informações sobre o projeto."""
         st.title("Bem-vindo ao Sistema de Análise Preditiva")
         st.markdown("---")
         st.header("Entendendo o Modelo: Um Guia Rápido")
@@ -123,7 +141,8 @@ class DashboardTrading:
                 "- **Não é uma Bola de Cristal:** Fatores macroeconômicos e notícias não estão no escopo do modelo.\n"
                 "- **Use como Ferramenta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
 
-    def _render_analise_em_abas(self, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):  # Adiciona df_ticker
+    def _render_analise_em_abas(self, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):
+        """Renderiza a análise preditiva em um layout de abas."""
         st.header(f"Análise Preditiva para {self.ticker_selecionado}")
         tabs = st.tabs(["🎯 **Resumo Executivo**", "🔍 **Análise da Previsão**", "🩺 **Saúde do Modelo**",
                         "📈 **Análise de Mercado**", "🧬 **DNA do Modelo**", "📊 **Simulação de Performance**"])
@@ -136,6 +155,7 @@ class DashboardTrading:
         with tabs[5]: self._render_tab_simulacao(X_full, precos_full)
 
     def _render_relatorio_completo(self, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):
+        """Renderiza um relatório completo de análise preditiva."""
         st.title(f"📋 Relatório de Análise Preditiva: {self.ticker_selecionado}")
 
         last_date = df_ticker.index[-1].strftime('%d/%m/%Y')
@@ -182,7 +202,8 @@ class DashboardTrading:
         self._render_glossario_metodologia()
 
     def _render_tab_resumo(self, previsao: Dict[str, Any], precos_full: pd.Series,
-                           df_ticker: pd.DataFrame):  # Adiciona df_ticker
+                           df_ticker: pd.DataFrame):
+        """Renderiza a aba de resumo executivo com a previsão e contexto recente do ativo."""
         st.subheader("Diagnóstico e Previsão")
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -203,12 +224,14 @@ class DashboardTrading:
         self._plot_previsao_recente(precos_full, previsao['should_operate'])
 
     def _render_tab_mercado(self, precos_full: pd.Series, df_ibov: pd.DataFrame):
+        """Renderiza a aba de análise de mercado com a performance do ativo versus o IBOVESPA."""
         st.subheader("Performance Relativa: Ativo vs. IBOVESPA (Último Ano)")
         st.info(
             "Este gráfico compara o crescimento de R$100 investidos no ativo selecionado versus no índice IBOVESPA. Ele ajuda a responder: a ação está com desempenho melhor ou pior que a média do mercado?")
         self._plot_performance_vs_ibov(precos_full, df_ibov)
 
     def _render_tab_dna(self, y_full: pd.Series):
+        """Renderiza a aba de DNA do modelo com importância das features e matriz de confusão."""
         st.subheader("O 'Cérebro' do Modelo: Fatores de Decisão")
         st.info("Aqui exploramos o que o modelo considera importante e como sua performance foi validada.")
         col1, col2 = st.columns(2)
@@ -223,6 +246,7 @@ class DashboardTrading:
         self._render_traducao_features()
 
     def _render_tab_simulacao(self, X_full: pd.DataFrame, precos_full: pd.Series):
+        """Renderiza a aba de simulação de performance com backtest e análise de risco."""
         st.warning(
             "Esta simulação é **'in-sample'** e tende a ser otimista. Serve principalmente para **ilustrar o comportamento visual** da estratégia ao longo do tempo.")
         risk_analyzer = RiskAnalyzer()
@@ -247,6 +271,7 @@ class DashboardTrading:
                     self._plot_sensibilidade_threshold(df_sensibilidade)
 
     def _render_tab_previsao_shap(self, X_full: pd.DataFrame):
+        """Renderiza a aba de explicabilidade da previsão atual usando SHAP."""
         st.subheader("Explicabilidade da Previsão Atual (SHAP)")
         st.info(
             "Este gráfico de cascata (waterfall) mostra como cada variável (feature) contribuiu para a previsão final. Features em vermelho empurram a previsão para cima (mais chance de 'Oportunidade'), enquanto as azuis empurraram para baixo.")
@@ -260,18 +285,16 @@ class DashboardTrading:
             X_last = X_full[self.modelo_carregado.features_selecionadas].tail(1)
             X_last_scaled = self.modelo_carregado.scaler.transform(X_last)
 
-            # 1. Obter o objeto de explicação SHAP bruto para a última amostra.
-            #    Ele contém as explicações para todas as classes.
+            # Obter os valores SHAP para a última amostra.
             shap_explanation_raw = self.modelo_carregado.shap_explainer(X_last_scaled)
 
-            # 2. Identificar o índice da nossa classe de interesse (classe 1 = 'Alta')
+            # Identificar o índice da classe 'Alta' (1) no array de classes do label encoder.
             idx_classe_1 = np.where(self.modelo_carregado.label_encoder.classes_ == 1)[0][0]
 
-            # 3. Fatiar o objeto de explicação para obter os dados da amostra 0 para a classe de 'Alta'.
-            #    Isso garante que estamos passando um único vetor de valores para o gráfico de cascata.
+            # Fatiar o objeto SHAP para obter apenas a explicação da classe 'Alta'.
             shap_explanation_for_plot = shap_explanation_raw[0, :, idx_classe_1]
 
-            # 4. Plotar o gráfico de cascata com o objeto já fatiado e correto.
+            # Plotar o gráfico de cascata (waterfall) usando a explicação fatiada.
             shap.initjs()
             fig, ax = plt.subplots(figsize=(10, 5))
             shap.plots.waterfall(shap_explanation_for_plot, max_display=15, show=False)
@@ -280,6 +303,7 @@ class DashboardTrading:
             plt.close()
 
     def _render_tab_saude_modelo(self, X_full: pd.DataFrame):
+        """Renderiza a aba de monitoramento de saúde do modelo, focando em data drift."""
         st.subheader("Monitoramento de Saúde do Modelo (Data Drift)")
         st.info(
             "Aqui comparamos as características dos dados mais recentes com os dados usados para treinar o modelo. Diferenças significativas (drift) podem indicar que o modelo precisa ser retreinado.")
@@ -309,6 +333,7 @@ class DashboardTrading:
 
     @st.cache_data
     def _analisar_sensibilidade_threshold(_self, X: pd.DataFrame, precos: pd.Series) -> pd.DataFrame:
+        """Analisa a sensibilidade do threshold de operação variando-o e calculando o Sharpe Ratio."""
         risk_analyzer = RiskAnalyzer()
         resultados = []
         for thr in np.arange(0.40, 0.75, 0.025):
@@ -319,6 +344,7 @@ class DashboardTrading:
         return pd.DataFrame(resultados)
 
     def _plot_sensibilidade_threshold(self, df_sensibilidade: pd.DataFrame):
+        """Plota a análise de sensibilidade do threshold de operação versus o Sharpe Ratio."""
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_sensibilidade['threshold'], y=df_sensibilidade['sharpe'], mode='lines+markers',
                                  name='Sharpe Ratio'))
@@ -328,7 +354,9 @@ class DashboardTrading:
                           xaxis_title="Threshold de Confiança", yaxis_title="Sharpe Ratio Anualizado")
         st.plotly_chart(fig, use_container_width=True)
 
-    def _plot_drift_distribution(self, baseline_series: pd.Series, current_series: pd.Series, feature_name: str):
+    @staticmethod
+    def _plot_drift_distribution(baseline_series: pd.Series, current_series: pd.Series, feature_name: str):
+        """"Plota a distribuição das features para detectar data drift usando o teste KS."""
         fig = go.Figure()
         fig.add_trace(go.Histogram(x=baseline_series, name='Treino', opacity=0.75, histnorm='probability density'))
         fig.add_trace(go.Histogram(x=current_series, name='Recente', opacity=0.75, histnorm='probability density'))
@@ -344,6 +372,7 @@ class DashboardTrading:
             st.success(f"P-valor (KS): {p_value:.3f}. Sem drift significativo.")
 
     def _render_diagnostico_confianca(self):
+        """Renderiza o diagnóstico de confiança do modelo baseado nas métricas históricas."""
         st.markdown("##### Diagnóstico de Confiança do Modelo (Histórico WFV)")
         metricas = self.modelo_carregado.wfv_metrics
         score, max_score, confianca_txt, cor = self._calcular_indice_confiabilidade(metricas)
@@ -371,7 +400,9 @@ class DashboardTrading:
             **Score Final:** `7-9`: **Alta Confiança** | `4-6`: **Média Confiança** | `0-3`: **Baixa Confiança**
             """)
 
-    def _render_traducao_features(self):
+    @staticmethod
+    def _render_traducao_features():
+        """Renderiza a tradução das features técnicas para termos simples."""
         with st.expander("O que esses fatores significam em termos simples? 🤔"):
             st.markdown("""
             - **`rsi_14` (Índice de Força Relativa):** Mede se o ativo está "caro" (sobrecomprado) ou "barato" (sobrevendido) recentemente. Ajuda a identificar possíveis pontos de virada.
@@ -381,7 +412,9 @@ class DashboardTrading:
             - **`correlacao_ibov`:** Indica se o ativo tende a se mover junto com o índice Bovespa ou na direção contrária.
             """)
 
-    def _render_glossario_metodologia(self):
+    @staticmethod
+    def _render_glossario_metodologia():
+        """Renderiza o glossário e explicações sobre a metodologia usada no modelo."""
         with st.expander("Glossário: Entendendo os Termos Técnicos 📖"):
             st.markdown("""
             - **Walk-Forward Validation (WFV):** A espinha dorsal da confiança neste modelo. Em vez de testar o modelo em dados que ele já 'espiou' durante o treino, o WFV simula a passagem do tempo: o modelo treina com dados do passado (ex: 2022) e é testado em dados do 'futuro' que ele nunca viu (ex: 2023). Isso resulta em uma estimativa de performance muito mais realista e confiável.
@@ -392,7 +425,9 @@ class DashboardTrading:
         st.warning(
             "⚠️ **Aviso Legal:** Esta é uma ferramenta de estudo e análise baseada em modelos estatísticos. A performance passada não é garantia de resultados futuros. Isto **não** constitui uma recomendação de investimento.")
 
-    def _calcular_indice_confiabilidade(self, metricas: Dict[str, Any]) -> tuple[int, int, str, str]:
+    @staticmethod
+    def _calcular_indice_confiabilidade(metricas: Dict[str, Any]) -> tuple[int, int, str, str]:
+        """Calcula o índice de confiabilidade do modelo baseado em métricas históricas."""
         score, max_score = 0, 9
         sharpe = metricas.get('sharpe_medio', 0)
         f1 = metricas.get('f1_macro_medio', 0)
@@ -420,6 +455,7 @@ class DashboardTrading:
         return score, max_score, "Baixa", "red"
 
     def _plot_gauge_confianca(self, probabilidade):
+        """Plota um gauge mostrando a confiança do modelo na previsão atual."""
         threshold = self.modelo_carregado.threshold_operacional
         fig = go.Figure(go.Indicator(
             mode="gauge+number", value=probabilidade * 100,
@@ -432,7 +468,9 @@ class DashboardTrading:
         st.plotly_chart(fig, use_container_width=True)
         st.caption("A linha vermelha indica o limiar de confiança mínimo para operar.")
 
-    def _plot_previsao_recente(self, precos: pd.Series, sinal_positivo: bool):
+    @staticmethod
+    def _plot_previsao_recente(precos: pd.Series, sinal_positivo: bool):
+        """Plota o preço recente do ativo com a tendência e o sinal de previsão."""
         df_recente = precos.tail(90).copy().to_frame(name='Preço')
         df_recente['Tendência (20d)'] = df_recente['Preço'].rolling(20).mean()
         fig = go.Figure()
@@ -451,6 +489,7 @@ class DashboardTrading:
         st.plotly_chart(fig, use_container_width=True)
 
     def _plot_performance_vs_ibov(self, precos_ativo: pd.Series, df_ibov: pd.DataFrame):
+        """Plota a performance do ativo versus o IBOVESPA, normalizando ambos para 100 no início do período."""
         if df_ibov is None or df_ibov.empty:
             st.warning("Não foi possível carregar os dados do IBOVESPA para comparação.")
             return
@@ -477,7 +516,9 @@ class DashboardTrading:
                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig, use_container_width=True)
 
-    def _plot_drawdown_curve(self, backtest_info: Dict[str, Any]):
+    @staticmethod
+    def _plot_drawdown_curve(backtest_info: Dict[str, Any]):
+        """Plota a curva de drawdown do backtest."""
         drawdown_series = backtest_info.get('drawdown_series', [])
         if not drawdown_series: return
         df_dd = pd.DataFrame(drawdown_series, columns=['Drawdown'])
@@ -489,6 +530,7 @@ class DashboardTrading:
         st.plotly_chart(fig, use_container_width=True)
 
     def _plot_matriz_confusao(self, y_full: pd.Series):
+        """Plota a matriz de confusão do último fold da validação walk-forward."""
         try:
             X_full_scaled = self.modelo_carregado.X_scaled
             y_full_encoded = self.modelo_carregado.label_encoder.transform(y_full)
@@ -508,7 +550,9 @@ class DashboardTrading:
         except Exception as e:
             st.warning(f"Não foi possível gerar a Matriz de Confusão: {e}")
 
-    def _forcar_download_dados(self):
+    @staticmethod
+    def _forcar_download_dados():
+        """Força o download dos dados novamente, apagando o banco de dados local."""
         st.info("Parando serviço de atualização para liberar o banco de dados...", icon="⏳")
         data_updater.parar_atualizacao()
         time.sleep(1)
@@ -526,6 +570,7 @@ class DashboardTrading:
             st.error(f"Ocorreu um erro inesperado: {e}")
 
     def _plot_importancia_features(self):
+        """Plota a importância das features do modelo."""
         try:
             importances = self.modelo_carregado.modelo_final.feature_importances_
             features = self.modelo_carregado.features_selecionadas
@@ -539,7 +584,9 @@ class DashboardTrading:
         except Exception as e:
             st.warning(f"Não foi possível gerar o gráfico de importância: {e}")
 
-    def _plot_precos_sinais(self, df_sinais, precos):
+    @staticmethod
+    def _plot_precos_sinais(df_sinais, precos):
+        """Plota os preços históricos com os sinais de operação gerados na simulação."""
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=precos.index, y=precos, mode='lines', name='Preço'))
         sinais_operar = df_sinais[df_sinais['sinal'] == 1]
@@ -551,7 +598,9 @@ class DashboardTrading:
                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         return fig
 
-    def _exibir_metricas_backtest(self, metricas: Dict[str, Any]):
+    @staticmethod
+    def _exibir_metricas_backtest(metricas: Dict[str, Any]):
+        """Exibe as principais métricas do backtest da simulação."""
         st.subheader("Métricas de Performance da Simulação")
         cols = st.columns(4)
         cols[0].metric("Retorno Total", f"{metricas.get('retorno_total', 0):.2%}")
@@ -570,7 +619,9 @@ class DashboardTrading:
         st.metric("Max Drawdown", f"{metricas.get('max_drawdown', 0):.2%}",
                   help="A maior queda percentual do capital a partir de um pico.")
 
-    def _plot_equidade(self, backtest_info: Dict[str, Any]) -> go.Figure:
+    @staticmethod
+    def _plot_equidade(backtest_info: Dict[str, Any]) -> go.Figure:
+        """Plota a curva de equidade do backtest da simulação."""
         curva_equidade = backtest_info.get('equity_curve', [])
         fig = go.Figure()
         if len(curva_equidade) > 1:
@@ -583,6 +634,7 @@ class DashboardTrading:
     @staticmethod
     @atexit.register
     def parar_servicos():
+        """Para os serviços de atualização ao sair da aplicação."""
         data_updater.parar_atualizacao()
 
 

@@ -5,7 +5,7 @@ import pandas as pd
 
 
 class CalculosFinanceiros:
-    """Classe com métodos para cálculos de indicadores financeiros."""
+    """Classe utilitária com métodos estáticos para cálculos de indicadores financeiros."""
 
     @staticmethod
     def calcular_rsi(precos: pd.Series, periodo: int = 14) -> pd.Series:
@@ -13,16 +13,17 @@ class CalculosFinanceiros:
         delta = precos.diff()
         ganho = (delta.where(delta > 0, 0)).rolling(window=periodo).mean()
         perda = (-delta.where(delta < 0, 0)).rolling(window=periodo).mean()
-        rs = ganho / (perda + 1e-9)
+        rs = ganho / (perda + 1e-9)  # Adiciona epsilon para evitar divisão por zero
         return 100 - (100 / (1 + rs))
 
     @staticmethod
     def calcular_stochastic(fechamento: pd.Series, alta: pd.Series,
                           baixa: pd.Series, periodo: int = 14) -> pd.Series:
+        """Calcula o Stochastic Oscillator."""
         menor_baixa = baixa.rolling(window=periodo).min()
         maior_alta = alta.rolling(window=periodo).max()
         denominador = maior_alta - menor_baixa
-        denominador = denominador.replace(0, np.nan)
+        denominador = denominador.replace(0, np.nan) # Evita divisão por zero
         return 100 * (fechamento - menor_baixa) / denominador
 
     @staticmethod
@@ -34,6 +35,7 @@ class CalculosFinanceiros:
         banda_superior = media_movel + (desvio_padrao * 2)
         banda_inferior = media_movel - (desvio_padrao * 2)
 
+        # %B indica a posição do preço em relação às bandas
         pct_b = (precos - banda_inferior) / (banda_superior - banda_inferior + 1e-9)
 
         return {
@@ -56,6 +58,7 @@ class CalculosFinanceiros:
     def calcular_obv(fechamento: pd.Series, volume: pd.Series) -> pd.Series:
         """Calcula o On-Balance Volume (OBV)."""
         retornos = fechamento.pct_change()
+        # Acumula o volume com base na direção do preço
         return (volume * np.sign(retornos.fillna(0))).cumsum()
 
     @staticmethod

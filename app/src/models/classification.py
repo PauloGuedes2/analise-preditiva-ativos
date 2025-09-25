@@ -1,6 +1,6 @@
 import os
 
-os.environ['LIGHTGBM_VERBOSE'] = '-1'
+os.environ['LIGHTGBM_VERBOSE'] = '-1'  # Suprime logs verbosos do LightGBM
 
 from typing import Dict, Any, List
 import numpy as np
@@ -18,28 +18,88 @@ from src.utils.utils import ValidadorDados
 from src.models.validation import PurgedKFoldCV
 from src.utils.risk_analyzer import RiskAnalyzer
 
-optuna.logging.set_verbosity(optuna.logging.WARNING)
+optuna.logging.set_verbosity(optuna.logging.WARNING)  # Suprime logs verbosos do Optuna
 
 
 class ClassificadorTrading:
-    """Sistema de classificação para previsão de direção de preços."""
+    """Encapsula todo o pipeline de um modelo de classificação"""
 
     def __init__(self):
+        """Inicializa o classificador com seus componentes e parâmetros."""
         self.random_state = Params.RANDOM_STATE
         self.n_features = Params.N_FEATURES_A_SELECIONAR
         self.modelo_final = None
         self.features_selecionadas = []
-        self.scaler = RobustScaler()
-        self.label_encoder = LabelEncoder()
-        self.threshold_operacional = 0.5
-        self.wfv_metrics = {}
-        self.cv_gen = None
-        self.X_scaled = None
-        # --- NOVOS ATRIBUTOS ---
-        self.training_data_profile = None
-        self.shap_explainer = None
+        self.scaler = RobustScaler()  # Scaler robusto a outliers
+        self.label_encoder = LabelEncoder()  # Para converter labels {-1, 0, 1} para {0, 1, 2}
+        self.threshold_operacional = 0.5  # Threshold de probabilidade para operar
+        self.wfv_metrics = {}  # Armazena métricas da validação walk-forward
+        self.cv_gen = None  # Gerador de folds da validação cruzada
+        self.X_scaled = None  # Dados de treino escalados
+        self.training_data_profile = None  # Perfil estatístico dos dados de treino
+        self.shap_explainer = None  # Objeto para explicabilidade do modelo
+
+    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, t1: pd.Series) -> Dict[str, Any]:
+        """
+        Executa o pipeline completo de treinamento: seleção de features, otimização e treino final.
+
+        Args:
+            X (pd.DataFrame): DataFrame com as features.
+            y (pd.Series): Series com os labels {-1, 0, 1}.
+            precos (pd.Series): Series com os preços de fechamento.
+            t1 (pd.Series): Series com os timestamps de término de cada evento da tripla barreira.
+
+        Returns:
+            Dict[str, Any]: Dicionário com as métricas de performance do modelo treinado.
+        """
+        logger.info("Iniciando pipeline de treinamento do modelo multiclasse...")
+        if not ValidadorDados.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
+            raise ValueError("Dados de treinamento inválidos ou insuficientes.")
+
+        # Prepara os dados
+        y_encoded = pd.Series(self.label_encoder.fit_transform(y), index=y.index)
+        self.features_selecionadas = self._selecionar_features(X, y_encoded)
+        if not self.features_selecionadas:
+            logger.error("Nenhuma feature selecionada - abortando treinamento")
+            return {}
+
+        X_selecionado = X[self.features_selecionadas]
+        self.scaler.fit(X_selecionado)
+        X_scaled = pd.DataFrame(self.scaler.transform(X_selecionado), index=X_selecionado.index,
+                                columns=self.features_selecionadas)
+
+        # Otimiza os hiperparâmetros
+        cv_gen = PurgedKFoldCV(n_splits=Params.N_SPLITS_CV, t1=t1, purge_days=Params.PURGE_DAYS)
+        best_params = self._otimizar_com_optuna(X_scaled, y_encoded, precos, cv_gen)
+
+        # Treina o modelo final
+        final_params = {'objective': 'multiclass', 'num_class': 3, 'boosting_type': 'gbdt', 'n_estimators': 1000,
+                        'random_state': self.random_state, 'n_jobs': -1, 'verbose': -1, **best_params}
+        logger.info("Treinando modelo final com os melhores parâmetros em todos os dados...")
+        self.modelo_final = lgb.LGBMClassifier(**final_params, class_weight='balanced')
+        self.modelo_final.fit(X_scaled, y_encoded)
+
+        # Gera artefatos pós-treinamento
+        logger.info("Criando perfil de dados de treino e explainer SHAP...")
+        self.training_data_profile = X_scaled.describe().to_dict()
+        self.shap_explainer = shap.TreeExplainer(self.modelo_final)
+
+        all_splits = list(cv_gen.split(X_scaled))
+        if not all_splits:
+            logger.error("Não foi possível criar splits de validação cruzada.")
+            return {}
+
+        # Avalia e calibra o modelo
+        _, test_idx = list(cv_gen.split(X_scaled))[-1]
+        metricas = self._avaliar_performance(X_scaled.iloc[test_idx], y.iloc[test_idx])
+        self.threshold_operacional = self._calibrar_threshold(X_scaled, y_encoded, cv_gen)
+        logger.info(f"Threshold operacional calibrado para: {self.threshold_operacional:.3f}")
+
+        self.cv_gen, self.X_scaled = cv_gen, X_scaled
+        return metricas
 
     def _selecionar_features(self, X: pd.DataFrame, y: pd.Series) -> List[str]:
+        """Seleciona as features mais importantes usando um modelo base."""
         logger.info(f"Iniciando seleção de {self.n_features} features de um total de {X.shape[1]}...")
         modelo_base = lgb.LGBMClassifier(random_state=self.random_state, class_weight='balanced', verbose=-1)
         num_features_a_selecionar = min(self.n_features, X.shape[1])
@@ -52,6 +112,7 @@ class ClassificadorTrading:
         return features_selecionadas
 
     def _otimizar_com_optuna(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, cv_gen) -> Dict[str, Any]:
+        """Otimiza os hiperparâmetros do modelo usando Optuna focado em maximizar o Sharpe Ratio."""
         logger.info("Iniciando otimização com Optuna focada em Sharpe Ratio...")
         risk_analyzer = RiskAnalyzer()
 
@@ -93,54 +154,8 @@ class ClassificadorTrading:
         logger.info(f"Melhor Sharpe Ratio da otimização: {study.best_value:.4f}")
         return study.best_params
 
-    def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, t1: pd.Series) -> Dict[str, Any]:
-        logger.info("Iniciando pipeline de treinamento do modelo multiclasse...")
-        if not ValidadorDados.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
-            raise ValueError("Dados de treinamento inválidos ou insuficientes.")
-
-        y_encoded = pd.Series(self.label_encoder.fit_transform(y), index=y.index)
-        self.features_selecionadas = self._selecionar_features(X, y_encoded)
-
-        if not self.features_selecionadas:
-            logger.error("Nenhuma feature selecionada - abortando treinamento")
-            return {}
-
-        X_selecionado = X[self.features_selecionadas]
-        self.scaler.fit(X_selecionado)
-        X_scaled = pd.DataFrame(self.scaler.transform(X_selecionado), index=X_selecionado.index,
-                                columns=self.features_selecionadas)
-
-        cv_gen = PurgedKFoldCV(n_splits=Params.N_SPLITS_CV, t1=t1, purge_days=Params.PURGE_DAYS)
-        best_params = self._otimizar_com_optuna(X_scaled, y_encoded, precos, cv_gen)
-
-        final_params = {'objective': 'multiclass', 'num_class': 3, 'boosting_type': 'gbdt', 'n_estimators': 1000,
-                        'random_state': self.random_state, 'n_jobs': -1, 'verbose': -1, **best_params}
-
-        logger.info("Treinando modelo final com os melhores parâmetros em todos os dados...")
-        self.modelo_final = lgb.LGBMClassifier(**final_params, class_weight='balanced')
-        self.modelo_final.fit(X_scaled, y_encoded)
-
-        # --- MODIFICAÇÃO: Salvar perfil dos dados de treino e explainer SHAP ---
-        logger.info("Criando perfil de dados de treino e explainer SHAP...")
-        self.training_data_profile = X_scaled.describe().to_dict()
-        self.shap_explainer = shap.TreeExplainer(self.modelo_final)
-        # --- FIM DA MODIFICAÇÃO ---
-
-        all_splits = list(cv_gen.split(X_scaled))
-        if not all_splits:
-            logger.error("Não foi possível criar splits de validação cruzada.")
-            return {}
-
-        _, test_idx = all_splits[-1]
-        metricas = self._avaliar_performance(X_scaled.iloc[test_idx], y.iloc[test_idx])
-        self.threshold_operacional = self._calibrar_threshold(X_scaled, y_encoded, cv_gen)
-        logger.info(f"Threshold operacional calibrado para: {self.threshold_operacional:.3f}")
-
-        self.cv_gen = cv_gen
-        self.X_scaled = X_scaled
-        return metricas
-
     def _avaliar_performance(self, X_test: pd.DataFrame, y_test_orig: pd.Series) -> Dict[str, Any]:
+        """Avalia a performance do modelo final em dados de teste."""
         preds_encoded = self.modelo_final.predict(X_test)
         preds_orig = self.label_encoder.inverse_transform(preds_encoded)
         acuracia = accuracy_score(y_test_orig, preds_orig)
@@ -150,6 +165,7 @@ class ClassificadorTrading:
         return metricas
 
     def _calibrar_threshold(self, X: pd.DataFrame, y_enc: pd.Series, cv_gen: PurgedKFoldCV) -> float:
+        """Calibra o threshold de decisão para maximizar o F1-Score da classe positiva."""
         thresholds = []
         for train_idx, val_idx in cv_gen.split(X, y_enc):
             probas = self.predict_proba(X.iloc[val_idx])
@@ -163,6 +179,7 @@ class ClassificadorTrading:
         return float(np.mean(thresholds)) if thresholds else 0.5
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        """Retorna as probabilidades previstas para a classe positiva"""
         if self.modelo_final is None: raise RuntimeError("O modelo não foi treinado.")
         if isinstance(X, np.ndarray): X = pd.DataFrame(X, columns=self.features_selecionadas)
         X_scaled = self.scaler.transform(X[self.features_selecionadas])
@@ -170,6 +187,7 @@ class ClassificadorTrading:
         return self.modelo_final.predict_proba(X_scaled)[:, idx_classe_1]
 
     def prever_direcao(self, X_novo: pd.DataFrame, ticker: str) -> Dict[str, Any]:
+        """Faz uma previsão de direção para um novo conjunto de dados."""
         try:
             proba = self.predict_proba(X_novo.tail(1))[-1]
             predicao = 1 if proba >= self.threshold_operacional else 0
@@ -182,6 +200,7 @@ class ClassificadorTrading:
 
     def prever_e_gerar_sinais(self, X: pd.DataFrame, precos: pd.Series, ticker: str,
                               threshold_override: float = None) -> pd.DataFrame:
+        """Gera sinais de compra/venda para um conjunto de dados, com threshold customizável."""
         threshold = threshold_override if threshold_override is not None else self.threshold_operacional
         probas = self.predict_proba(X)
         sinais = (probas >= threshold).astype(int)

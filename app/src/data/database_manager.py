@@ -3,7 +3,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from src.config.params import Params
 from src.logger.logger import logger
@@ -11,10 +11,18 @@ from src.utils.utils import Utils
 
 
 class DatabaseManager:
-    """Gerencia operações de banco de dados SQLite para metadados do modelo."""
+    """Gerencia operações de banco de dados SQLite para metadados do modelo e previsões."""
 
     def __init__(self, db_path: str = None):
+        """
+        Inicializa o gerenciador de banco de dados.
+
+        Args:
+            db_path (str, optional): Caminho para o arquivo do banco de dados.
+                                     Se não fornecido, usa o padrão de `Params`.
+        """
         self.db_path = db_path or Params.PATH_DB_METADATA
+        # Garante que o diretório para o DB exista
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._criar_tabelas()
         logger.info(f"DatabaseManager inicializado com banco: {self.db_path}")
@@ -29,12 +37,12 @@ class DatabaseManager:
             conexao.close()
 
     def _criar_tabelas(self):
-        """Cria tabelas necessárias se não existirem."""
+        """Cria as tabelas `treino_metadata` e `previsoes` se elas não existirem."""
         try:
             with self._conexao() as conn:
                 cursor = conn.cursor()
 
-                # Tabela de metadados de treino
+                # Tabela para armazenar metadados de cada sessão de treinamento
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS treino_metadata (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +51,7 @@ class DatabaseManager:
                     )
                 """)
 
-                # Tabela de previsões
+                # Tabela para armazenar cada previsão gerada
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS previsoes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,13 +71,14 @@ class DatabaseManager:
 
     @staticmethod
     def _obter_timestamp_atual() -> str:
-        """Retorna timestamp atual em formato ISO."""
+        """Retorna o timestamp UTC atual em formato de string ISO."""
         return datetime.utcnow().isoformat()
 
     def salvar_treino_metadata(self, metadata: Dict[str, Any]):
-        """Salva metadados de treino no banco."""
+        """Salva os metadados de uma sessão de treinamento no banco de dados."""
         try:
             timestamp = self._obter_timestamp_atual()
+            # Converte o dicionário de metadados para uma string JSON
             metadata_json = json.dumps(metadata, default=Utils.converter_para_json_serializavel)
 
             with self._conexao() as conn:
@@ -87,7 +96,7 @@ class DatabaseManager:
             raise
 
     def salvar_previsao(self, dados: Dict[str, Any]):
-        """Salva dados de previsão no banco."""
+        """Salva os dados de uma única previsão no banco de dados."""
         try:
             timestamp = self._obter_timestamp_atual()
             predicao = dados.get('predicao')
@@ -110,54 +119,3 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Erro ao salvar previsão: {e}")
             raise
-
-    def buscar_ultimo_treino(self) -> Optional[Dict[str, Any]]:
-        """Busca o último registro de treino do banco."""
-        try:
-            with self._conexao() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT metadata_json FROM treino_metadata ORDER BY id DESC LIMIT 1"
-                )
-                resultado = cursor.fetchone()
-
-                if resultado:
-                    metadata = json.loads(resultado[0])
-                    logger.debug("Último treino recuperado do banco")
-                    return metadata
-
-                logger.warning("Nenhum registro de treino encontrado")
-                return None
-
-        except Exception as e:
-            logger.error(f"Erro ao buscar último treino: {e}")
-            return None
-
-    def buscar_previsoes_recentes(self, limite: int = None) -> list:
-        """Busca as previsões mais recentes do banco."""
-        limite = limite or Params.LIMITE_PREVISOES_RECENTES
-
-        try:
-            with self._conexao() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """SELECT criado_em, predicao, probabilidade, metadados_json 
-                       FROM previsoes ORDER BY id DESC LIMIT ?""",
-                    (limite,)
-                )
-
-                resultados = []
-                for row in cursor.fetchall():
-                    resultados.append({
-                        'criado_em': row[0],
-                        'predicao': row[1],
-                        'probabilidade': row[2],
-                        'metadados': json.loads(row[3])
-                    })
-
-                logger.debug(f"{len(resultados)} previsões recentes recuperadas")
-                return resultados
-
-        except Exception as e:
-            logger.error(f"Erro ao buscar previsões recentes: {e}")
-            return []

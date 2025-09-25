@@ -13,16 +13,23 @@ from src.logger.logger import logger
 
 
 class DataLoader:
-    """Carrega e gerencia dados de mercado do Yahoo Finance."""
+    """Carrega e gerencia dados de mercado do Yahoo Finance, com cache em um banco de dados local."""
 
     def __init__(self, db_path: str = None):
+        """
+        Inicializa o DataLoader.
+
+        Args:
+            db_path (str, optional): Caminho para o arquivo do banco de dados de mercado.
+                                     Se não fornecido, usa o padrão de `Params`.
+        """
         self.db_path = db_path or Params.PATH_DB_MERCADO
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._criar_tabelas()
 
     @contextmanager
     def _conexao(self):
-        """Context manager para gerenciar conexões com o banco."""
+        """Context manager para gerenciar conexões com o banco de dados SQLite."""
         conexao = sqlite3.connect(self.db_path)
         try:
             yield conexao
@@ -30,9 +37,10 @@ class DataLoader:
             conexao.close()
 
     def _criar_tabelas(self):
-        """Cria tabelas necessárias se não existirem."""
+        """Cria a tabela `ohlcv` para armazenar os dados de mercado, se não existir."""
         with self._conexao() as conn:
             cursor = conn.cursor()
+            # Chave primária composta por ticker e data para evitar duplicatas
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ohlcv (
                     ticker TEXT,
@@ -50,7 +58,17 @@ class DataLoader:
     @staticmethod
     def _processar_dados_yfinance(dados_completos: pd.DataFrame, ticker: str) -> Tuple[
         pd.DataFrame, pd.DataFrame]:
-        """Processa dados brutos do yfinance e separa em DataFrames."""
+        """
+        Processa o DataFrame bruto do yfinance, separando os dados do ticker e do IBOV.
+
+        Args:
+            dados_completos (pd.DataFrame): DataFrame com MultiIndex de yfinance.
+            ticker (str): O nome do ticker principal.
+
+        Returns:
+            Tuple[pd.DataFrame, pd.DataFrame]: Um DataFrame para o ticker e outro para o IBOV.
+        """
+        # Extrai colunas específicas do ticker
         df_ticker = pd.DataFrame({
             'Open': dados_completos['Open'][ticker],
             'High': dados_completos['High'][ticker],
@@ -59,6 +77,7 @@ class DataLoader:
             'Volume': dados_completos['Volume'][ticker]
         }).dropna()
 
+        # Extrai a coluna de fechamento do IBOV
         df_ibov = dados_completos['Close']['^BVSP'].to_frame('Close_IBOV')
 
         return df_ticker, df_ibov
@@ -74,12 +93,12 @@ class DataLoader:
 
         end_date = datetime.now() + timedelta(days=1)
 
+        # Converte o período (ex: "3y") em uma data de início
         match = re.match(r"(\d+)(\w+)", periodo_config)
         if not match:
             raise ValueError(f"Formato de período inválido: '{periodo_config}'. Use '4y', '6mo', '10d', etc.")
 
         valor, unidade = int(match.group(1)), match.group(2).lower()
-
         if unidade == 'y':
             start_date = end_date - timedelta(days=valor * 365)
         elif unidade in ['mo', 'm']:
@@ -89,9 +108,7 @@ class DataLoader:
         else:
             raise ValueError(f"Unidade de período não suportada: '{unidade}'. Use 'y', 'mo' ou 'd'.")
 
-        start_str = start_date.strftime('%Y-%m-%d')
-        end_str = end_date.strftime('%Y-%m-%d')
-
+        start_str, end_str = start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
         logger.info(f"Baixando dados para {ticker} - De: {start_str} até {end_str}")
 
         try:

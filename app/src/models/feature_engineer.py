@@ -9,66 +9,69 @@ from src.utils.financial_calculation import CalculosFinanceiros
 
 
 class FeatureEngineer:
-    """Realiza engenharia de features e cria datasets para modelos de trading."""
+    """Realiza a engenharia de features e a criação de labels para os modelos de trading."""
 
     def __init__(self):
         self.calculos = CalculosFinanceiros()
 
     def _adicionar_indicadores_tecnicos(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Adiciona um conjunto robusto de indicadores técnicos."""
+        """Adiciona um conjunto robusto de indicadores técnicos ao DataFrame."""
         close, high, low, volume = df['Close'], df['High'], df['Low'], df['Volume']
 
-        # Momentum
+        # Indicadores de Momentum
         df['rsi_14'] = self.calculos.calcular_rsi(close, 14)
         df['stoch_14'] = self.calculos.calcular_stochastic(close, high, low, 14)
         df['momentum_5d'] = close.pct_change(5)
         df['momentum_21d'] = close.pct_change(21)
 
-        # Tendência
+        # Indicadores de Tendência
         df['sma_ratio_10_50'] = self.calculos.calcular_medias_moveis(close, [10, 50])['sma_10'] / \
                                 self.calculos.calcular_medias_moveis(close, [10, 50])['sma_50']
+
         macd = close.ewm(span=12).mean() - close.ewm(span=26).mean()
         df['macd_hist'] = macd - macd.ewm(span=9).mean()
 
-        # Volatilidade
+        # Indicadores de Volatilidade
         df['bollinger_pct'] = self.calculos.calcular_bandas_bollinger(close, 20)['pct_b']
         df['atr_14_norm'] = self.calculos.calcular_atr(high, low, close, 14) / close
         df['vol_21d'] = close.pct_change().rolling(21).std() * np.sqrt(252)
 
-        # Volume
+        # Indicadores de Volume
         df['cmf_20'] = self.calculos.calcular_cmf(high, low, close, volume, 20)
         df['volume_ratio_21d'] = volume / volume.rolling(21).mean()
 
-        # Volatilidade da volatilidade
+        # Indicadores de Volatilidade Avançada
         df['vol_of_vol_10d'] = df['vol_21d'].rolling(10).std()
 
-        # 1. Tendência de Longo Prazo
+        # Indicador de Tendência de Longo Prazo
         df['sma_ratio_50_200'] = self.calculos.calcular_medias_moveis(close, [50, 200])['sma_50'] / \
                                  self.calculos.calcular_medias_moveis(close, [50, 200])['sma_200']
 
-        # 2. On-Balance Volume (OBV) Normalizado
+        # Indicador de Volume Acumulado
         obv = self.calculos.calcular_obv(close, volume)
         df['obv_norm_21d'] = (obv - obv.rolling(21).min()) / (obv.rolling(21).max() - obv.rolling(21).min() + 1e-9)
 
-        # 3. Retornos de Períodos Adicionais
+        # Indicador de Retornos Simples de Curto Prazo
         df['retorno_1d'] = close.pct_change(1)
         df['retorno_3d'] = close.pct_change(3)
 
         return df
 
-    def _adicionar_features_ibov(self, df: pd.DataFrame, df_ibov: Optional[pd.DataFrame]) -> pd.DataFrame:
-        """Adiciona features de mercado (IBOV) com tratamento robusto."""
+    @staticmethod
+    def _adicionar_features_ibov(df: pd.DataFrame, df_ibov: Optional[pd.DataFrame]) -> pd.DataFrame:
+        """Adiciona features de mercado (IBOV) com tratamento robusto de dados."""
         if df_ibov is not None and not df_ibov.empty and 'Close_IBOV' in df_ibov.columns:
             try:
+                # Alinha o índice do IBOV com o do ativo, preenchendo dias faltantes
                 df_ibov_alinhado = df_ibov.reindex(df.index).ffill().bfill()
 
-                # Calcular correlação apenas se houver dados suficientes
+                # Adicionar feature de correlação de 20 dias com o IBOV
                 if len(df_ibov_alinhado) > 20:
                     correlacao = df['Close'].pct_change().rolling(20).corr(
                         df_ibov_alinhado['Close_IBOV'].pct_change())
                     df['correlacao_ibov_20d'] = correlacao
 
-                # Adicionar feature simples de tendência do IBOV
+                # Adicionar feature de posição relativa ao SMA de 50 dias do IBOV
                 if len(df_ibov_alinhado) > 50:
                     df['ibov_acima_sma50'] = (
                             df_ibov_alinhado['Close_IBOV'] >
@@ -80,14 +83,28 @@ class FeatureEngineer:
 
         return df
 
-    def _get_event_end_time(self, precos: pd.Series, t0: pd.Timestamp, pt: float, sl: float,
+    @staticmethod
+    def _get_event_end_time(precos: pd.Series, t0: pd.Timestamp, pt: float, sl: float,
                             n_dias: int) -> pd.Timestamp:
-        """Encontra o tempo de término do evento da Tripla Barreira."""
+        """
+        Encontra o timestamp em que uma das barreiras (lucro, perda ou tempo) é atingida.
+
+        Args:
+            precos (pd.Series): Série de preços futuros.
+            t0 (pd.Timestamp): Timestamp de início do evento.
+            pt (float): Preço da barreira de lucro (profit taking).
+            sl (float): Preço da barreira de perda (stop loss).
+            n_dias (int): Número máximo de dias para o evento.
+
+        Returns:
+            pd.Timestamp: O timestamp de término do evento.
+        """
         janela = precos[t0:].iloc[1:n_dias + 1]
 
         atingiu_superior = janela[janela >= pt]
         atingiu_inferior = janela[janela <= sl]
 
+        # Retorna o tempo do primeiro toque em qualquer barreira
         if not atingiu_inferior.empty and not atingiu_superior.empty:
             return min(atingiu_superior.index[0], atingiu_inferior.index[0])
         elif not atingiu_superior.empty:
@@ -95,10 +112,8 @@ class FeatureEngineer:
         elif not atingiu_inferior.empty:
             return atingiu_inferior.index[0]
 
-        # Se nenhuma barreira for atingida, o evento termina no final da janela
-        if not janela.empty:
-            return janela.index[-1]
-        return t0 + pd.Timedelta(days=n_dias)
+        # Retorna o final da janela se nenhuma barreira for tocada
+        return janela.index[-1] if not janela.empty else t0 + pd.Timedelta(days=n_dias)
 
     def _criar_labels_tripla_barreira(
             self,
@@ -107,7 +122,7 @@ class FeatureEngineer:
             ticker: str,
             lookahead_days: Optional[int] = None
     ) -> Tuple[pd.Series, pd.Series]:
-        """Cria labels (alvo) e t1 (tempo de término do evento) para a purga."""
+        """"Cria labels usando a metodologia de tripla barreira com volatilidade adaptativa baseada no ATR"""
         n_dias = lookahead_days or Params.TRIPLE_BARRIER_LOOKAHEAD_DAYS
 
         if len(precos) < n_dias * 2:
@@ -147,7 +162,7 @@ class FeatureEngineer:
 
     def preparar_dataset(self, df_ohlc: pd.DataFrame, df_ibov: Optional[pd.DataFrame], ticker: str) -> Tuple[
         pd.DataFrame, pd.Series, pd.Series, pd.Series, pd.DataFrame]:
-        """Cria o dataset completo com features, labels e t1 para o modelo."""
+        """Prepara o dataset final com features e labels para o modelo"""
         logger.info("Iniciando criação de features e dataset...")
 
         df = df_ohlc.copy()

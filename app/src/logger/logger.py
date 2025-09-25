@@ -1,5 +1,3 @@
-# Em src/logger/logger.py
-
 import logging
 import sys
 from src.config.params import Params
@@ -9,7 +7,7 @@ def get_logger():
     Configura e retorna um logger padrão do Python, garantindo que os handlers
     não sejam duplicados. Esta é a abordagem recomendada e thread-safe.
     """
-    logger = logging.getLogger("trading_app_logger") # Nome único para evitar conflitos
+    logger = logging.getLogger("trading_app_logger")
 
     # Evita adicionar handlers se o logger já estiver configurado
     if not logger.handlers:

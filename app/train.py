@@ -19,6 +19,7 @@ class TreinadorModelos:
     """Gerencia o treinamento e salvamento de modelos de trading com validação temporal robusta."""
 
     def __init__(self):
+        """Inicializa o treinador, carregando configurações de tickers e diretórios."""
         self.tickers = Params.TICKERS
         self.diretorio_modelos = Params.PATH_MODELOS
 
@@ -29,17 +30,29 @@ class TreinadorModelos:
 
     @staticmethod
     def _validar_dados(df: pd.DataFrame, ticker: str) -> bool:
-        """Valida se o DataFrame de dados é suficiente para o treinamento."""
+        """
+        Valida se o DataFrame de dados é suficiente para o treinamento.
+
+        Args:
+            df (pd.DataFrame): DataFrame com os dados do ativo.
+            ticker (str): Nome do ticker para logging.
+
+        Returns:
+            bool: True se os dados forem válidos, False caso contrário.
+        """
+        # Verifica se o número de registros atende ao MINIMO_DADOS_TREINO
         if df.shape[0] < Params.MINIMO_DADOS_TREINO:
             logger.warning(
                 f"Dados insuficientes para {ticker}: {df.shape[0]} registros. Mínimo: {Params.MINIMO_DADOS_TREINO}")
             return False
+        # Verifica se a quantidade de dados faltantes não excede 5% do total
         if df.isnull().sum().sum() > df.shape[0] * 0.05:
             logger.warning(f"Excesso de dados faltantes para {ticker}: {df.isnull().sum().sum()} valores nulos.")
             return False
         return True
 
-    def _realizar_walk_forward_validation(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series,
+    @staticmethod
+    def _realizar_walk_forward_validation(X: pd.DataFrame, y: pd.Series, precos: pd.Series,
                                           t1: pd.Series, ticker: str) -> Dict[str, Any]:
         """Realiza validação walk-forward para estimar performance real."""
         logger.info(f"Iniciando walk-forward validation para {ticker}...")
@@ -51,30 +64,32 @@ class TreinadorModelos:
 
         for fold, (train_idx, test_idx) in enumerate(cv_gen.split(X)):
             if len(test_idx) == 0:
-                continue
+                continue # Pula folds sem dados de teste
 
             logger.info(f"Fold {fold + 1}: Treino={len(train_idx)}, Teste={len(test_idx)}")
 
-            # Treinar modelo neste fold
+            # Divide os dados para o fold atual
             modelo_fold = ClassificadorTrading()
             X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
             y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
             precos_test = precos.iloc[test_idx]
 
-            # Treinar apenas com dados do fold
+            # Treina um modelo temporário apenas com os dados do fold
             metricas = modelo_fold.treinar(X_train, y_train, precos.iloc[train_idx], t1.iloc[train_idx])
 
             if not metricas:
-                continue
+                continue # Pula se o treinamento do fold falhar
 
-            # Gerar sinais no conjunto de teste
+            # Gera sinais e calcula performance no conjunto de teste
             df_sinais_test = modelo_fold.prever_e_gerar_sinais(X_test, precos_test, ticker)
             backtest_results = RiskAnalyzer().backtest_sinais(df_sinais_test)
 
+            # Armazena as métricas do fold
             f1_scores.append(metricas.get('f1_macro', 0))
             sharpe_scores.append(backtest_results.get('sharpe', 0))
             trades_count.append(backtest_results.get('trades', 0))
 
+        # Retorna a média das métricas de todos os folds
         return {
             'f1_macro_medio': np.mean(f1_scores) if f1_scores else 0,
             'sharpe_medio': np.mean(sharpe_scores) if sharpe_scores else 0,
@@ -85,52 +100,46 @@ class TreinadorModelos:
     def _treinar_modelo_para_ticker(self, ticker: str) -> bool:
         """Pipeline de treinamento para um único ticker com validação robusta."""
         try:
-            # Carregar e validar dados
+            # Carrega e valida os dados históricos
             loader = DataLoader()
             df_ohlc, df_ibov = loader.baixar_dados_yf(ticker, periodo=Params.PERIODO_DADOS)
 
             if not self._validar_dados(df_ohlc, ticker):
                 return False
 
-            # Engenharia de features e criação do dataset
+            # Cria features e o dataset final
             feature_engineer = FeatureEngineer()
             X, y, precos, t1, _ = feature_engineer.preparar_dataset(df_ohlc, df_ibov, ticker)
-
             if X.empty or y.empty:
                 logger.error(f"Dataset vazio para {ticker} após engenharia de features.")
                 return False
 
-            # Walk-forward validation para estimar performance real
+            # Estima a performance real do modelo usando Walk-Forward Validation
             wfv_results = self._realizar_walk_forward_validation(X, y, precos, t1, ticker)
-
-            if wfv_results['folds_validos'] < 3:  # Mínimo 3 folds válidos
+            if wfv_results['folds_validos'] < 3:
                 logger.warning(f"{ticker} - Walk-forward validation insuficiente: {wfv_results['folds_validos']} folds")
                 return False
 
-            # Treinamento do modelo final com todos os dados
+            # Treina o modelo final com todos os dados
             modelo = ClassificadorTrading()
             metricas = modelo.treinar(X, y, precos, t1)
 
-            # Backtest final com todos os dados (apenas para confirmação)
-            df_sinais_test = modelo.prever_e_gerar_sinais(modelo.X_scaled, precos, ticker)
-            backtest_results = RiskAnalyzer().backtest_sinais(df_sinais_test)
-            sharpe_ratio = backtest_results.get('sharpe', 0)
-
-            # CRITÉRIOS RIGOROSOS DE SALVAMENTO
+            # Critérios de salvamento do modelo
             f1_wfv = wfv_results['f1_macro_medio']
             sharpe_wfv = wfv_results['sharpe_medio']
             trades_wfv = wfv_results['trades_medio']
 
-            criterio_f1 = f1_wfv > 0.50  # F1 médio na validação walk-forward
-            criterio_sharpe = sharpe_wfv > -0.1  # Sharpe médio positivo
-            criterio_trades = trades_wfv >= 2.5  # Mínimo 2.5 trades em média
+            # Define os critérios mínimos de performance para salvar o modelo
+            criterio_f1 = f1_wfv > 0.50
+            criterio_sharpe = sharpe_wfv > -0.1
+            criterio_trades = trades_wfv >= 2.5
 
             logger.info(f"{ticker} - WFV: F1={f1_wfv:.3f}, Sharpe={sharpe_wfv:.3f}, Trades={trades_wfv:.1f}")
 
             if 'modelo' in locals():
-                modelo.wfv_metrics = wfv_results
+                modelo.wfv_metrics = wfv_results # Anexa as métricas de validação ao objeto do modelo
 
-            # Salvar modelo apenas se atender todos os critérios
+            # Salva o modelo apenas se todos os critérios forem atendidos
             if criterio_f1 and criterio_sharpe and criterio_trades:
                 caminho_modelo = os.path.join(self.diretorio_modelos, f"modelo_{ticker}.joblib")
                 dump(modelo, caminho_modelo)
@@ -155,7 +164,7 @@ class TreinadorModelos:
         resultados = {ticker: self._treinar_modelo_para_ticker(ticker) for ticker in self.tickers}
         tempo_total = datetime.now() - tempo_inicio
 
-        # Relatório final
+        # Log do relatório final
         modelos_sucesso = sum(1 for sucesso in resultados.values() if sucesso)
         logger.info("=" * 50)
         logger.info("📋 PROCESSO DE TREINAMENTO CONCLUÍDO 📋")
@@ -167,6 +176,7 @@ class TreinadorModelos:
             logger.info(f"      {ticker}: {status}")
         logger.info("=" * 50)
 
+        # Avisos sobre o resultado geral
         if modelos_sucesso == 0:
             logger.warning("⚠️ Nenhum modelo atingiu os critérios de performance para ser salvo.")
         elif modelos_sucesso < len(self.tickers):
