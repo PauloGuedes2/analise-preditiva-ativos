@@ -13,7 +13,6 @@ class Params:
     PERIODO_DADOS: str = "3y"  # Período para baixar dados (ex: "5y", "1mo")
     INTERVALO_DADOS: str = "1d"  # Intervalo dos candles (ex: "1d", "1h")
     MINIMO_DADOS_TREINO: int = 300  # Número mínimo de registros para treinar um modelo
-    LIMITE_PREVISOES_RECENTES = 100  # Quantidade de previsões a serem buscadas do DB para exibição
 
     # Lista de tickers a serem treinados e avaliados
     TICKERS: List[str] = [
@@ -24,7 +23,6 @@ class Params:
     TRIPLE_BARRIER_LOOKAHEAD_DAYS: int = 5  # Janela de tempo (dias) para a metodologia da Tripla Barreira (olhar para frente)
 
     # Fatores de ATR para definir as barreiras de lucro (take profit) e perda (stop loss).
-    # Pode ser ajustado por ativo ou usar um valor padrão.
     ATR_FACTORS: Dict[str, Tuple[float, float]] = {
         "DEFAULT": (1.5, 1.0),  # (Fator Take Profit, Fator Stop Loss)
         "PETR4.SA": (1.5, 1.0),
@@ -41,7 +39,6 @@ class Params:
     # --- Configurações de Validação e Otimização ---
     N_SPLITS_CV: int = 5  # Número de folds para a validação cruzada
     PURGE_DAYS: int = 5  # Dias de purga entre treino e teste para evitar data leakage
-    EMBARGO_DAYS: int = 3  # Dias de embargo após o teste
 
     # Parâmetros do otimizador de hiperparâmetros Optuna
     OPTUNA_N_TRIALS: int = 100  # Número de tentativas de otimização

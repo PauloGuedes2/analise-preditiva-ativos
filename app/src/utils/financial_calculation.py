@@ -18,12 +18,12 @@ class CalculosFinanceiros:
 
     @staticmethod
     def calcular_stochastic(fechamento: pd.Series, alta: pd.Series,
-                          baixa: pd.Series, periodo: int = 14) -> pd.Series:
+                            baixa: pd.Series, periodo: int = 14) -> pd.Series:
         """Calcula o Stochastic Oscillator."""
         menor_baixa = baixa.rolling(window=periodo).min()
         maior_alta = alta.rolling(window=periodo).max()
         denominador = maior_alta - menor_baixa
-        denominador = denominador.replace(0, np.nan) # Evita divisão por zero
+        denominador = denominador.replace(0, np.nan)  # Evita divisão por zero
         return 100 * (fechamento - menor_baixa) / denominador
 
     @staticmethod
@@ -63,21 +63,11 @@ class CalculosFinanceiros:
 
     @staticmethod
     def calcular_cmf(alta: pd.Series, baixa: pd.Series, fechamento: pd.Series,
-                      volume: pd.Series, periodo: int = 20) -> pd.Series:
+                     volume: pd.Series, periodo: int = 20) -> pd.Series:
         """Calcula o Chaikin Money Flow (CMF)."""
         multiplicador_mf = ((fechamento - baixa) - (alta - fechamento)) / (alta - baixa + 1e-9)
         volume_mf = multiplicador_mf * volume
         return volume_mf.rolling(periodo).sum() / volume.rolling(periodo).sum()
-
-    @staticmethod
-    def calcular_retornos(precos: pd.Series, periodos: list = None) -> Dict[str, pd.Series]:
-        """Calcula retornos para múltiplos períodos."""
-        if periodos is None:
-            periodos = [1, 3, 5, 10]
-        retornos = {}
-        for periodo in periodos:
-            retornos[f'retorno_{periodo}d'] = precos.pct_change(periodo)
-        return retornos
 
     @staticmethod
     def calcular_medias_moveis(precos: pd.Series, janelas: list = None) -> Dict[str, pd.Series]:
@@ -116,40 +106,3 @@ class CalculosEstatisticos:
 
         sortino = (np.mean(retornos) / downside_std) * np.sqrt(dias_anuais)
         return float(sortino)
-
-    @staticmethod
-    def calcular_drawdown(curva_equidade: np.ndarray) -> float:
-        """Calcula o máximo drawdown."""
-        if len(curva_equidade) < 2:
-            return 0.0
-
-        pico = np.maximum.accumulate(curva_equidade)
-        drawdowns = (curva_equidade - pico) / pico
-        return float(np.min(drawdowns))
-
-    @staticmethod
-    def calcular_var(retornos: np.ndarray, nivel_confianca: float = 0.95) -> float:
-        """Calcula Value at Risk (VaR) histórico."""
-        if len(retornos) == 0:
-            return 0.0
-        return float(np.percentile(retornos, (1 - nivel_confianca) * 100))
-
-    @staticmethod
-    def calcular_cvar(retornos: np.ndarray, nivel_confianca: float = 0.95) -> float:
-        """Calcula Conditional Value at Risk (CVaR)."""
-        if len(retornos) == 0:
-            return 0.0
-
-        var = CalculosEstatisticos.calcular_var(retornos, nivel_confianca)
-        retornos_abaixo_var = retornos[retornos <= var]
-
-        if len(retornos_abaixo_var) == 0:
-            return var
-
-        return float(np.mean(retornos_abaixo_var))
-
-    @staticmethod
-    def calcular_correlacao_rolling(serie1: pd.Series, serie2: pd.Series,
-                                     janela: int = 20) -> pd.Series:
-        """Calcula correlação rolling entre duas séries."""
-        return serie1.rolling(janela).corr(serie2)

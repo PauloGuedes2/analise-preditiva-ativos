@@ -37,19 +37,10 @@ class DatabaseManager:
             conexao.close()
 
     def _criar_tabelas(self):
-        """Cria as tabelas `treino_metadata` e `previsoes` se elas não existirem."""
+        """Cria a tabela `previsoes` se ela não existir."""
         try:
             with self._conexao() as conn:
                 cursor = conn.cursor()
-
-                # Tabela para armazenar metadados de cada sessão de treinamento
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS treino_metadata (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        criado_em TEXT,
-                        metadata_json TEXT
-                    )
-                """)
 
                 # Tabela para armazenar cada previsão gerada
                 cursor.execute("""
@@ -73,27 +64,6 @@ class DatabaseManager:
     def _obter_timestamp_atual() -> str:
         """Retorna o timestamp UTC atual em formato de string ISO."""
         return datetime.utcnow().isoformat()
-
-    def salvar_treino_metadata(self, metadata: Dict[str, Any]):
-        """Salva os metadados de uma sessão de treinamento no banco de dados."""
-        try:
-            timestamp = self._obter_timestamp_atual()
-            # Converte o dicionário de metadados para uma string JSON
-            metadata_json = json.dumps(metadata, default=Utils.converter_para_json_serializavel)
-
-            with self._conexao() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT INTO treino_metadata (criado_em, metadata_json) VALUES (?,?)",
-                    (timestamp, metadata_json)
-                )
-                conn.commit()
-
-            logger.info(f"Metadados de treino salvos - ID: {cursor.lastrowid}")
-
-        except Exception as e:
-            logger.error(f"Erro ao salvar metadados de treino: {e}")
-            raise
 
     def salvar_previsao(self, dados: Dict[str, Any]):
         """Salva os dados de uma única previsão no banco de dados."""
