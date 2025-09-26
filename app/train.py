@@ -12,7 +12,7 @@ from src.logger.logger import logger
 from src.models.classification import ClassificadorTrading
 from src.models.feature_engineer import FeatureEngineer
 from src.models.validation import PurgedKFoldCV
-from src.utils.risk_analyzer import RiskAnalyzer
+from src.backtesting.risk_analyzer import RiskAnalyzer
 
 
 class TreinadorModelos:

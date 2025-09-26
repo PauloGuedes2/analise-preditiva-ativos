@@ -14,9 +14,8 @@ import shap
 
 from src.config.params import Params
 from src.logger.logger import logger
-from src.utils.utils import Utils
 from src.models.validation import PurgedKFoldCV
-from src.utils.risk_analyzer import RiskAnalyzer
+from src.backtesting.risk_analyzer import RiskAnalyzer
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)  # Suprime logs verbosos do Optuna
 
@@ -39,6 +38,21 @@ class ClassificadorTrading:
         self.training_data_profile = None  # Perfil estatístico dos dados de treino
         self.shap_explainer = None  # Objeto para explicabilidade do modelo
 
+    @staticmethod
+    def validar_dados_treinamento(X: pd.DataFrame, y: pd.Series,
+                                  min_amostras: int = 100) -> bool:
+        """Valida dados para treinamento."""
+        if len(X) < min_amostras or len(y) < min_amostras:
+            return False
+
+        if len(X) != len(y):
+            return False
+
+        if y.nunique() < 2:  # Pelo menos duas classes
+            return False
+
+        return True
+
     def treinar(self, X: pd.DataFrame, y: pd.Series, precos: pd.Series, t1: pd.Series) -> Dict[str, Any]:
         """
         Executa o pipeline completo de treinamento: seleção de features, otimização e treino final.
@@ -53,7 +67,7 @@ class ClassificadorTrading:
             Dict[str, Any]: Dicionário com as métricas de performance do modelo treinado.
         """
         logger.info("Iniciando pipeline de treinamento do modelo multiclasse...")
-        if not Utils.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
+        if not self.validar_dados_treinamento(X, y, Params.MINIMO_DADOS_TREINO):
             raise ValueError("Dados de treinamento inválidos ou insuficientes.")
 
         # Prepara os dados

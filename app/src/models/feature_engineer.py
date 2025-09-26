@@ -5,7 +5,7 @@ import pandas as pd
 
 from src.config.params import Params
 from src.logger.logger import logger
-from src.utils.financial_calculation import CalculosFinanceiros
+from src.models.technical_indicators import CalculosFinanceiros
 
 
 class FeatureEngineer:

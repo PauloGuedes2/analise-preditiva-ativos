@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from src.config.params import Params
 from src.logger.logger import logger
-from src.utils.financial_calculation import CalculosEstatisticos
+from src.models.technical_indicators import CalculosEstatisticos
 
 
 class RiskAnalyzer:

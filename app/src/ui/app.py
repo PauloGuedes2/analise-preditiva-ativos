@@ -18,7 +18,7 @@ from src.config.params import Params
 from src.data.data_loader import DataLoader
 from src.data.data_updater import data_updater
 from src.models.feature_engineer import FeatureEngineer
-from src.utils.risk_analyzer import RiskAnalyzer
+from src.backtesting.risk_analyzer import RiskAnalyzer
 
 # Configuração da página do Streamlit
 st.set_page_config(layout="wide", page_title="Análise Preditiva de Ativos", page_icon="📈")
