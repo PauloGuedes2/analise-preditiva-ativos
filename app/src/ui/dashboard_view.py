@@ -11,6 +11,7 @@ from scipy.stats import ks_2samp
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 from src.backtesting.risk_analyzer import RiskAnalyzer
+from src.config.params import Params
 
 
 class DashboardView:
@@ -52,8 +53,7 @@ class DashboardView:
     def render_analise_em_abas(self, ticker, modelo, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):
         """Renderiza a análise preditiva em um layout de abas."""
         self.st.header(f"Análise Preditiva para {ticker}")
-        tabs = self.st.tabs(["🎯 **Resumo Executivo**", "🔍 **Análise da Previsão**", "🩺 **Saúde do Modelo**",
-                             "📈 **Análise de Mercado**", "🧬 **DNA do Modelo**", "📊 **Simulação de Performance**"])
+        tabs = self.st.tabs(Params.UI_TAB_NAMES)
 
         with tabs[0]: self._render_tab_resumo(previsao, precos_full, df_ticker, modelo)
         with tabs[1]: self._render_tab_previsao_shap(X_full, modelo)
@@ -166,7 +166,7 @@ class DashboardView:
         self.st.dataframe(pd.concat([baseline_profile, current_profile], axis=1,
                                     keys=['Treino (Baseline)', 'Recente (Últimos 60 dias)']))
         self.st.markdown("**Análise Visual de Drift das Features Principais**")
-        key_features = ['rsi_14', 'vol_21d', 'sma_ratio_10_50', 'momentum_5d']
+        key_features = Params.UI_DRIFT_KEY_FEATURES
         cols = self.st.columns(len(key_features))
         for i, feature in enumerate(key_features):
             if feature in baseline_profile.columns and feature in X_recent_scaled.columns:

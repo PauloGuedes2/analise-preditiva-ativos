@@ -56,3 +56,15 @@ class Params:
     LOG_LEVEL: str = "INFO"  # Nível de log (DEBUG, INFO, WARNING, ERROR)
     LOG_FORMAT: str = '%(asctime)s - %(levelname)s - %(message)s'
     LOG_DATE_FORMAT: str = '%Y-%m-%d %H:%M:%S'
+
+    # --- Configurações de UI ---
+    UI_TAB_NAMES: List[str] = [
+        "🎯 **Resumo Executivo**",
+        "🔍 **Análise da Previsão**",
+        "🩺 **Saúde do Modelo**",
+        "📈 **Análise de Mercado**",
+        "🧬 **DNA do Modelo**",
+        "📊 **Simulação de Performance**"
+    ]
+
+    UI_DRIFT_KEY_FEATURES: List[str] = ['rsi_14', 'vol_21d', 'sma_ratio_10_50', 'momentum_5d']
