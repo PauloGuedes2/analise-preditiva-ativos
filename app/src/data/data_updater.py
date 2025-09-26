@@ -47,10 +47,16 @@ class DataUpdater:
         while self.executando:
             try:
                 self.atualizar_todos_tickers(tickers)
-                time.sleep(intervalo_minutos * 60)
+
+                # Loop de espera que verifica a cada segundo se deve parar
+                for _ in range(intervalo_minutos * 60):
+                    if not self.executando:
+                        break  # Sai do loop de espera imediatamente se a flag mudar
+                    time.sleep(1)
+
             except Exception as e:
                 logger.error(f"Erro no loop de atualização: {e}")
-                time.sleep(60)  # Espera 1 minuto antes de tentar novamente em caso de erro
+                time.sleep(60)
 
     def atualizar_todos_tickers(self, tickers: List[str]):
         """Itera sobre a lista de tickers e tenta atualizar cada um."""
@@ -91,8 +97,8 @@ class DataUpdater:
     def parar_atualizacao(self):
         """Sinaliza para a thread de atualização parar e aguarda sua finalização."""
         self.executando = False
-        if self.thread:
-            self.thread.join(timeout=5)
+        if self.thread and self.thread.is_alive():
+            self.thread.join()
             logger.info("Serviço de atualização parado")
 
 # Instância global

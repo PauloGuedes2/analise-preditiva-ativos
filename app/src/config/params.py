@@ -33,7 +33,7 @@ class Params:
     }
 
     # --- Configurações do Modelo ---
-    N_FEATURES_A_SELECIONAR: int = 30  # Número de features a serem selecionadas pelo modelo
+    N_FEATURES_A_SELECIONAR: int = 18  # Número de features a serem selecionadas pelo modelo
     RANDOM_STATE: int = 42  # Semente para garantir reprodutibilidade
 
     # --- Configurações de Validação e Otimização ---
