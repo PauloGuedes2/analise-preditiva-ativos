@@ -26,7 +26,7 @@ class TreinadorModelos:
 
     def executar_treinamento_completo(self) -> None:
         """Executa o processo de treinamento para todos os tickers configurados."""
-        logger.info("🎯 Iniciando processo de treinamento de modelos...")
+        logger.info("🤖 Iniciando processo de treinamento de modelos...")
         self._criar_diretorio_modelos()
         tempo_inicio = datetime.now()
 
