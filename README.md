@@ -155,7 +155,7 @@ python app/train.py
 
 #### Exemplos de Saída
 
-- Modelos: `modelos_treinados/modelo_PETR4.SA.joblib`
+- Modelos: `modelos_treinados/modelo_ITSA4.SA.joblib`
 - Dados: `dados/dados_mercado.db`
 - Logs: exibidos no console
 
@@ -165,17 +165,17 @@ python app/train.py
 
 Principais parâmetros globais:
 
-| Parâmetro         | Valor Default                     | Descrição                       |
-|-------------------|-----------------------------------|---------------------------------|
-| `tickers`         | PETR4, VALE3, ITSA4, ITUB4, ELET3 | Ativos analisados               |
-| `periodo`         | 3y                                | Período histórico (3 anos)      |
-| `intervalo`       | 1d                                | Intervalo dos dados (diário)    |
-| `custo_trade`     | 0.1%                              | Custo por operação              |
-| `optuna_trials`   | 100                               | Nº de tentativas Optuna         |
-| `optuna_timeout`  | 300s                              | Tempo máximo por otimização     |
-| `model_params`    | ...                               | Hiperparâmetros do LightGBM     |
-| `ui_params`       | ...                               | Configurações da interface      |
-| `logging`         | customizado                       | Níveis, formatos e data         |
+| Parâmetro         | Valor Default         | Descrição                       |
+|-------------------|-----------------------|---------------------------------|
+| `tickers`         | VALE3, ITSA4, ELET3   | Ativos analisados               |
+| `periodo`         | 3y                    | Período histórico (3 anos)      |
+| `intervalo`       | 1d                    | Intervalo dos dados (diário)    |
+| `custo_trade`     | 0.1%                  | Custo por operação              |
+| `optuna_trials`   | 100                   | Nº de tentativas Optuna         |
+| `optuna_timeout`  | 300s                  | Tempo máximo por otimização     |
+| `model_params`    | ...                   | Hiperparâmetros do LightGBM     |
+| `ui_params`       | ...                   | Configurações da interface      |
+| `logging`         | customizado           | Níveis, formatos e data         |
 
 ---
 

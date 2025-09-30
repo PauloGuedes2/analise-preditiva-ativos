@@ -16,7 +16,7 @@ class Params:
 
     # Lista de tickers a serem treinados e avaliados
     TICKERS: List[str] = [
-        "PETR4.SA", "VALE3.SA", "ITSA4.SA", "ELET3.SA", "ITUB4.SA"
+       "VALE3.SA", "ITSA4.SA", "ELET3.SA"
     ]
 
     # --- Configurações de Feature Engineering e Labeling ---
@@ -25,9 +25,7 @@ class Params:
     # Fatores de ATR para definir as barreiras de lucro (take profit) e perda (stop loss).
     ATR_FACTORS: Dict[str, Tuple[float, float]] = {
         "DEFAULT": (1.5, 1.0),  # (Fator Take Profit, Fator Stop Loss)
-        "PETR4.SA": (1.5, 1.0),
         "ITSA4.SA": (1.2, 0.8),
-        "ITUB4.SA": (1.4, 1.0),
         "ELET3.SA": (1.2, 0.8),
         "VALE3.SA": (1.2, 0.8)
     }
