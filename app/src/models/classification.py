@@ -172,8 +172,6 @@ class ClassificadorTrading:
             logger.error("Atributo X_scaled não definido. Rode .treinar() primeiro.")
             return risk_analyzer.retornar_metricas_vazias()
 
-        # Garante que todos os dataframes e series usados estejam perfeitamente alinhados
-        # com o X_scaled, que é a base de dados final do modelo.
         common_index = self.X_scaled.index.intersection(y.index).intersection(precos.index).intersection(t1.index)
 
         X_aligned = self.X_scaled.loc[common_index]
@@ -182,12 +180,10 @@ class ClassificadorTrading:
         t1_aligned = t1.loc[common_index]
 
         y_encoded_aligned = pd.Series(self.label_encoder.transform(y_aligned), index=common_index)
-
-        # Recria o gerador de CV com o t1 perfeitamente alinhado ao X que será usado.
-        # Isso resolve o erro de desalinhamento de índice.
         cv_gen = PurgedKFoldCV(n_splits=Params.N_SPLITS_CV, t1=t1_aligned, purge_days=Params.PURGE_DAYS)
 
         todos_os_retornos = []
+        todos_os_sinais_wfv = []
 
         for train_idx, test_idx in cv_gen.split(X_aligned):
             if len(test_idx) == 0: continue
@@ -204,6 +200,11 @@ class ClassificadorTrading:
             sinais = (probas_test >= self.threshold_operacional).astype(int)
 
             df_sinais_test = pd.DataFrame({'preco': precos_test.values, 'sinal': sinais}, index=precos_test.index)
+
+            sinais_positivos = df_sinais_test[df_sinais_test['sinal'] == 1]
+            for data, linha in sinais_positivos.iterrows():
+                todos_os_sinais_wfv.append({'data': data, 'preco': linha['preco']})
+
             backtest_fold = risk_analyzer.backtest_sinais(df_sinais_test, verbose=False)
 
             if backtest_fold['trades'] > 0:
@@ -224,6 +225,8 @@ class ClassificadorTrading:
             'max_drawdown': float(np.min(drawdown_series)),
             'win_rate': np.sum(retornos_np > 0) / len(retornos_np),
             'equity_curve': capital_total.tolist(),
+            'retornos': retornos_np.tolist(),
+            'sinais_wfv': todos_os_sinais_wfv,
         }
 
     @staticmethod

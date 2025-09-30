@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Dict, Any
 
 import matplotlib.pyplot as plt
@@ -26,7 +25,7 @@ class DashboardView:
         self.st.title("Bem-vindo ao Sistema de Análise Preditiva")
         self.st.markdown("---")
         self.st.header("Entendendo o Modelo: Um Guia Rápido")
-        self.st.info("**Selecione um ativo na barra lateral e escolha um tipo de análise para começar.**", icon="👈")
+        self.st.info("**Selecione um ativo na barra lateral para começar.**", icon="👈")
         col1, col2 = self.st.columns(2)
         with col1:
             self.st.subheader("🎯 O Que é Este Projeto?")
@@ -50,100 +49,162 @@ class DashboardView:
                 "- **Não é uma Bola de Cristal:** Fatores macroeconômicos e notícias não estão no escopo do modelo.\n"
                 "- **Use como Ferramenta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
 
-    def render_analise_em_abas(self, ticker, modelo, previsao, X_full, y_full, precos_full, df_ibov, df_ticker, t1,
-                               validacao_recente, metricas_validacao):
+    def render_main_layout(self, ticker, modelo, dados, validacao_recente, metricas_validacao):
+        """Renderiza o layout principal, incluindo o painel de veredito e as abas de análise profunda."""
+
         self.st.header(f"Análise Preditiva para {ticker}")
-        tabs = self.st.tabs(Params.UI_TAB_NAMES)
 
-        with tabs[0]:
-            self._render_tab_resumo(previsao, precos_full, df_ticker, modelo, validacao_recente,
-                                    metricas_validacao)
-        with tabs[1]:
-            self._render_tab_avaliacao(X_full, y_full, precos_full, t1, modelo)
-        with tabs[2]:
-            self._render_tab_previsao_shap(X_full, modelo)
-        with tabs[3]:
-            self._render_tab_saude_modelo(X_full, modelo)
-        with tabs[4]:
-            self._render_tab_mercado(precos_full, df_ibov, ticker)
-        with tabs[5]:
-            self._render_tab_simulacao(X_full, precos_full, ticker, modelo)
+        self._render_verdict_panel(modelo, dados)
 
-    def render_relatorio_completo(self, ticker, modelo, previsao, X_full, y_full, precos_full, df_ibov, df_ticker):
-        """Renderiza um relatório completo de análise preditiva."""
-        self.st.title(f"📋 Relatório de Análise Preditiva: {ticker}")
+        self.st.info("Para entender os detalhes por trás do veredito, explore as abas de análise abaixo.", icon="👇")
 
-        next_date = (df_ticker.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
-        self.st.caption(
-            f"Relatório gerado em {datetime.now().strftime('%d/%m/%Y às %H:%M')} | Previsão para o pregão de {next_date}")
+        tab1, tab2, tab3 = self.st.tabs([
+            "🔎 **Diagnóstico da Previsão**",
+            "📈 **Performance Histórica**",
+            "📊 **Análise de Mercado**"
+        ])
 
-        self.st.header("1. Conclusão Executiva: Qual é o Veredito?")
+        with tab1:
+            self._render_tab_diagnostico_previsao(modelo, dados, validacao_recente, metricas_validacao)
+        with tab2:
+            self._render_tab_performance_historica(modelo, dados, ticker)
+        with tab3:
+            self._render_tab_mercado(ticker, modelo, dados)
+
+    def _render_verdict_panel(self, modelo, dados):
+        """Renderiza o painel principal com o veredito e as métricas mais importantes."""
+        previsao = dados['previsao']
+        wfv_metrics = modelo.wfv_metrics
+        score, max_score, _, _ = self._calcular_indice_confiabilidade(wfv_metrics)
+
         recomendacao = "🟢 **OPORTUNIDADE**" if previsao['should_operate'] else "🟡 **OBSERVAR**"
-        probabilidade = previsao['probabilidade']
+
+        st.markdown("---")
+        cols = self.st.columns(5)
+
+        with cols[0]:
+            st.markdown(f"<h3 style='text-align: center;'>Veredito</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='text-align: center;'>{recomendacao}</h2>", unsafe_allow_html=True)
+
+        cols[1].metric("Confiança no Sinal", f"{previsao['probabilidade']:.1%}",
+                       help="Probabilidade estimada pelo modelo para a ocorrência de um evento de alta.")
+        cols[2].metric("Score de Confiança", f"{score}/{max_score}",
+                       help="Pontuação de 0 a 9 que resume a robustez histórica do modelo para este ativo, com base na validação Walk-Forward.")
+        cols[3].metric("Sharpe Médio (WFV)", f"{wfv_metrics.get('sharpe_medio', 0):.2f}",
+                       help="Mede o retorno ajustado ao risco na validação mais robusta (Walk-Forward). Acima de 0.5 é bom.")
+
+        wfv_performance = modelo.gerar_performance_wfv_agregada(dados['y_full'], dados['precos_full'], dados['t1'])
+        cols[4].metric("Taxa de Acerto (WFV)", f"{wfv_performance.get('win_rate', 0):.1%}",
+                       help="Percentual de acertos dos sinais de 'Oportunidade' gerados durante a validação Walk-Forward.")
+        st.markdown("---")
+
+    def _render_tab_diagnostico_previsao(self, modelo, dados, validacao_recente, metricas_validacao):
+        """Renderiza a aba focada em explicar e validar a previsão atual."""
         col1, col2 = self.st.columns(2)
         with col1:
-            self.st.markdown(f"Para o próximo pregão, o modelo sinaliza **{recomendacao}** para o ativo **{ticker}**.")
-            self.st.metric("Data da Previsão", next_date)
-            self.st.metric("Confiança do Modelo na Alta", f"{probabilidade:.1%}",
-                           help="Probabilidade estimada pelo modelo para um movimento de alta, conforme definido pela estratégia da Tripla Barreira.")
-            self.st.metric("Limiar Mínimo para Operar", f"{modelo.threshold_operacional:.1%}",
-                           help="O modelo só recomenda 'Oportunidade' se a confiança superar este valor, que foi calibrado para otimizar a performance.")
+            self.st.subheader("Explicabilidade da Previsão (SHAP)")
+            self.st.caption("Quais fatores mais influenciaram a recomendação de hoje?")
+            self._render_secao_previsao_shap(dados['X_full'], modelo)
+
         with col2:
-            self._plot_gauge_confianca(probabilidade, modelo)
+            self.st.subheader("Saúde do Modelo (Data Drift)")
+            self.st.caption("O mercado atual se parece com os dados de treino?")
+            self._render_secao_saude_modelo(dados['X_full'], modelo)
 
-        self.st.header("2. Diagnóstico de Confiança: Por que Confiar Nesta Previsão?")
-        self.st.info(
-            "A confiança na previsão não é arbitrária. Ela se baseia no desempenho histórico robusto do modelo, validado através do método **Walk-Forward**, que simula como o modelo teria performado em condições reais no passado.")
-        self._render_diagnostico_confianca(modelo)
+        self.st.divider()
+        self.st.subheader(f"Validação de Performance (Últimos {Params.UI_VALIDATION_DAYS} Sinais)")
+        self.st.caption("Como o modelo performou nos últimos dias?")
+        self._render_secao_validacao_recente(validacao_recente, metricas_validacao)
 
-        self.st.header("3. Contexto de Mercado: Ativo vs. IBOVESPA")
-        self.st.write(
-            "A performance do ativo é comparada com o índice Bovespa para avaliar seu desempenho relativo ao mercado como um todo.")
-        self._plot_performance_vs_ibov(precos_full, df_ibov, ticker)
+    def _render_tab_performance_historica(self, modelo, dados, ticker):
+        """Renderiza a aba que consolida todas as análises de performance histórica."""
 
-        self.st.header("4. O 'Cérebro' do Modelo: Como a Decisão foi Tomada?")
-        self.st.write(
-            "O modelo não é uma 'caixa-preta'. Abaixo, vemos os fatores que ele mais considerou para a sua decisão e a prova de sua capacidade de classificação.")
-        col_dna1, col_dna2 = self.st.columns(2)
-        with col_dna1:
+        self.st.subheader("Resultados da Validação Walk-Forward (Out-of-Sample)")
+        self.st.success(
+            "Esta é a estimativa mais **realista e confiável** da performance do modelo, pois simula operações em dados que o modelo nunca viu durante o treino.")
+
+        self._render_explicacao_score_confianca()
+
+        wfv_performance = modelo.gerar_performance_wfv_agregada(dados['y_full'], dados['precos_full'], dados['t1'])
+
+        if wfv_performance['trades'] > 0:
+            cols = self.st.columns(4)
+            cols[0].metric("Retorno Total (WFV)", f"{wfv_performance['retorno_total']:.2%}")
+            cols[1].metric("Nº de Trades (WFV)", f"{wfv_performance['trades']}")
+            cols[2].metric("Taxa de Acerto (WFV)", f"{wfv_performance['win_rate']:.1%}")
+            cols[3].metric("Max Drawdown (WFV)", f"{wfv_performance['max_drawdown']:.2%}")
+
+            col_chart1, col_chart2 = self.st.columns(2)
+            with col_chart1:
+                self._plot_wfv_equity_curve(wfv_performance)
+            with col_chart2:
+                self._plot_rolling_sharpe_wfv(wfv_performance)
+        else:
+            self.st.warning("Não há trades suficientes na validação WFV para gerar a curva de capital.")
+
+        self.st.divider()
+
+        self.st.subheader("Simulação Completa (In-Sample)")
+        self.st.warning(
+            "Esta simulação utiliza **todos os dados históricos** (incluindo dados de treino) e tende a ser uma visão **otimista**. Serve principalmente para ilustrar o comportamento da estratégia.")
+        self._render_secao_simulacao_completa(ticker, modelo, dados)
+
+        self.st.divider()
+        self.st.subheader("Análise Visual dos Sinais WFV")
+        self.st.caption(
+            "Este gráfico mostra exatamente onde os sinais de oportunidade teriam ocorrido em um cenário realista de teste.")
+        self._plot_wfv_signals_on_price(dados['precos_full'], wfv_performance)
+
+    def _render_tab_mercado(self, ticker, modelo, dados):
+        """Renderiza a aba de Análise de Mercado."""
+        self.st.subheader("Previsão no Contexto do Preço Recente")
+        self._plot_previsao_recente(dados['precos_full'], dados['previsao']['should_operate'])
+
+        self.st.divider()
+
+        self.st.subheader(f"Performance Relativa: {ticker} vs. IBOVESPA")
+        self._plot_performance_vs_ibov(dados['precos_full'], dados['df_ibov'], ticker)
+
+        self.st.divider()
+        self.st.subheader("DNA do Modelo: Fatores e Performance de Classificação")
+        col1, col2 = self.st.columns(2)
+        with col1:
             self.st.markdown("**Variáveis Mais Influentes**")
             self._plot_importancia_features(modelo)
-        with col_dna2:
-            self.st.markdown("**Prova de Performance (Classificação)**")
-            self._plot_matriz_confusao(y_full, modelo)
-        self._render_traducao_features()
+        with col2:
+            self.st.markdown("**Performance de Classificação**")
+            self._plot_matriz_confusao(dados['y_full'], modelo)
 
-        self.st.header("5. Metodologia e Glossário")
+        self._render_traducao_features()
         self._render_glossario_metodologia()
 
-    def _render_secao_validacao_recente(self, resultados_validacao: list, metricas: dict):
-        """Renderiza as métricas e a tabela de validação de performance recente."""
-        self.st.divider()
-        self.st.subheader(
-            f"Validação de Performance (Últimos {Params.UI_VALIDATION_DAYS} Sinais)",
-            help="Esta tabela mostra os sinais que o modelo teria gerado nos últimos dias e os compara com o resultado real do mercado. O 'Resultado Real' é definido pela metodologia da Tripla Barreira."
-        )
+    def _render_secao_simulacao_completa(self, ticker, modelo, dados):
+        risk_analyzer = RiskAnalyzer()
+        df_sinais = modelo.prever_e_gerar_sinais(dados['X_full'], dados['precos_full'], ticker)
+        backtest_info = risk_analyzer.backtest_sinais(df_sinais)
 
+        self.st.plotly_chart(self._plot_precos_sinais(df_sinais, dados['precos_full']), use_container_width=True)
+
+        if backtest_info.get('trades', 0) > 0:
+            self._render_secao_metricas_simulacao(backtest_info)
+            self._render_secao_risco_capital(backtest_info)
+            self._render_secao_sensibilidade(dados['X_full'], dados['precos_full'], ticker, modelo)
+        else:
+            self.st.info("A simulação não gerou nenhuma operação para este ativo.")
+
+    def _render_secao_validacao_recente(self, resultados_validacao: list, metricas: dict):
         if not resultados_validacao:
             self.st.warning("Não há dados suficientes para gerar a validação recente.")
             return
 
-        # Exibe as métricas de resumo
         col1, col2 = self.st.columns(2)
-        col1.metric(
-            "Taxa de Acerto (Sinais de Oportunidade)",
-            f"{metricas.get('taxa_acerto', 0):.1%}",
-            help="Dos sinais de 'OPORTUNIDADE' gerados, qual porcentagem correspondeu a um resultado real de 'ALTA' (Tripla Barreira)."
-        )
-        col2.metric(
-            "Retorno Médio Diário (nos Acertos)",
-            f"{metricas.get('retorno_medio_acertos', 0):.2%}",
-            help="A variação média do preço no dia seguinte para os sinais de 'OPORTUNIDADE' que o modelo acertou."
-        )
+        col1.metric("Taxa de Acerto (Sinais de Oportunidade)", f"{metricas.get('taxa_acerto', 0):.1%}",
+                    help="Dos sinais de 'OPORTUNIDADE' gerados, qual porcentagem correspondeu a um resultado real de 'ALTA' (Tripla Barreira).")
+        col2.metric("Retorno Médio Diário (nos Acertos)", f"{metricas.get('retorno_medio_acertos', 0):.2%}",
+                    help="A variação média do preço no dia seguinte para os sinais de 'OPORTUNIDADE' que o modelo acertou.")
 
         df_validacao = pd.DataFrame(resultados_validacao)
 
-        # Formatação e Estilização
         def formatar_resultado_real(label):
             if label == 1: return "📈 ALTA"
             if label == -1: return "📉 BAIXA"
@@ -152,9 +213,9 @@ class DashboardView:
         def estilo_performance(val):
             cor = ""
             if "ACERTOU" in val:
-                cor = "#28a745"  # Verde
+                cor = "#28a745"
             elif "ERROU" in val:
-                cor = "#dc3545"  # Vermelho
+                cor = "#dc3545"
             return f'color: {cor}; font-weight: bold;'
 
         def estilo_variacao(val):
@@ -167,102 +228,84 @@ class DashboardView:
 
         self.st.dataframe(
             df_validacao.style
-            .format({
-                "Confiança do Modelo": "{:.1%}",
-                "Variação Diária Real": "{:+.2%}"
-            })
-            .applymap(estilo_performance, subset=['Performance'])
-            .applymap(estilo_variacao, subset=['Variação Diária Real']),
-            use_container_width=True,
-            hide_index=True
+            .format({"Confiança do Modelo": "{:.1%}", "Variação Diária Real": "{:+.2%}"})
+            .map(estilo_performance, subset=['Performance'])
+            .map(estilo_variacao, subset=['Variação Diária Real']),
+            use_container_width=True, hide_index=True)
+
+    def _render_explicacao_score_confianca(self):
+        """Renderiza um expander explicando a metodologia do Score de Confiança."""
+        with self.st.expander("Como o Score de Confiança é calculado? 🤔"):
+            self.st.markdown("""
+            O score é uma nota de 0 a 9 que resume a robustez histórica do modelo para este ativo, com base em 3 pilares da validação Walk-Forward (WFV):
+
+            **1. Risco-Retorno (Sharpe Ratio):** Mede a qualidade do retorno em relação ao risco assumido.
+            - `Sharpe > 1.0`: **+3 pontos** (Excelente)
+            - `Sharpe > 0.3`: **+2 pontos** (Bom)
+            - `Sharpe > -0.1`: **+1 ponto** (Aceitável)
+
+            **2. Qualidade Preditiva (F1-Score):** Mede o equilíbrio do modelo em acertar as oportunidades sem gerar muitos alarmes falsos.
+            - `F1-Score > 65%`: **+3 pontos** (Ótima)
+            - `F1-Score > 55%`: **+2 pontos** (Boa)
+            - `F1-Score > 50%`: **+1 ponto** (Razoável)
+
+            **3. Relevância Estatística (Média de Trades):** Garante que a performance foi observada em um número mínimo de operações.
+            - `Média > 8 trades/fold`: **+3 pontos** (Ativo)
+            - `Média > 4 trades/fold`: **+2 pontos** (Moderado)
+            - `Média > 2.5 trades/fold`: **+1 ponto** (Seletivo)
+
+            ---
+            **Score Final:**
+            - **7-9 Pontos:** <span style='color:green;font-weight:bold;'>Alta Confiança</span>
+            - **4-6 Pontos:** <span style='color:orange;font-weight:bold;'>Média Confiança</span>
+            - **0-3 Pontos:** <span style='color:red;font-weight:bold;'>Baixa Confiança</span>
+            """, unsafe_allow_html=True)
+
+    def _plot_rolling_sharpe_wfv(self, performance_data: dict, janela: int = 25):
+        """Plota o Sharpe Ratio móvel da validação Walk-Forward."""
+        retornos = performance_data.get('retornos', [])
+        if len(retornos) < janela:
+            self.st.caption("Não há trades suficientes para calcular a performance móvel.")
+            return
+
+        def sharpe_anualizado(r):
+            if r.std() == 0: return 0.0
+            return (r.mean() / r.std()) * np.sqrt(Params.DIAS_UTEIS_ANUAIS)
+
+        rolling_sharpe = pd.Series(retornos).rolling(window=janela).apply(sharpe_anualizado, raw=True)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=rolling_sharpe.index, y=rolling_sharpe, mode='lines',
+            name='Sharpe Móvel', line=dict(color='purple')
+        ))
+        fig.add_hline(y=0.5, line_dash="dash", line_color="gray", annotation_text="Bom")
+        fig.add_hline(y=1.0, line_dash="dash", line_color="green", annotation_text="Ótimo")
+
+        fig.update_layout(
+            title=f'Sharpe Ratio Móvel (Janela de {janela} trades)',
+            xaxis_title='Nº de Operações (ordem cronológica)',
+            yaxis_title='Sharpe Ratio Anualizado',
+            height=400
         )
-
-    def _render_tab_resumo(self, previsao, precos_full, df_ticker, modelo, validacao_recente: list,
-                           metricas_validacao: dict):
-        """Renderiza a aba de Resumo, focada no sinal ATUAL e na performance RECENTE."""
-        self.st.subheader("Diagnóstico e Previsão para o Próximo Pregão")
-        col1, col2 = self.st.columns([1, 2])
-        with col1:
-            recomendacao = "🟢 **OPORTUNIDADE**" if previsao['should_operate'] else "🟡 **OBSERVAR**"
-            self.st.markdown(f"<h1>{recomendacao}</h1>", unsafe_allow_html=True)
-            proximo_dia_util = (df_ticker.index[-1] + pd.tseries.offsets.BDay(1)).strftime('%d/%m/%Y')
-            self.st.metric("Data da Previsão", proximo_dia_util)
-        with col2:
-            self._plot_gauge_confianca(previsao['probabilidade'], modelo)
-
-        self.st.divider()
-        self.st.subheader("Previsão no Contexto do Preço Recente")
-        self._plot_previsao_recente(precos_full, previsao['should_operate'])
-
-        self._render_secao_validacao_recente(validacao_recente, metricas_validacao)
-
-
-
-    def _render_tab_avaliacao(self, X_full, y_full, precos_full, t1, modelo):
-        """Renderiza o painel completo de avaliação da performance e robustez do modelo."""
-        self.st.subheader("Painel de Avaliação: O Modelo é Confiável para este Ativo?")
-        self.st.info(
-            "Esta análise é baseada na **Validação Walk-Forward (WFV)**, o método mais robusto para simular a performance real de um modelo em séries temporais.")
-
-        # Seção 1: O Veredito e as Métricas Chave
-        self.st.markdown("#### Veredito de Confiança (Baseado no Histórico WFV)")
-        self.st.caption(
-            "Este score é calculado com base nas métricas da validação walk-forward (Sharpe, F1-Score, Trades). Ele representa a robustez histórica da estratégia para este ativo.")
-        self._render_diagnostico_confianca(modelo)
-
-        # Seção 2: A Prova Visual - Curva de Capital WFV
-        self.st.subheader("Curva de Capital (Simulação Out-of-Sample)")
-        self.st.caption(
-            "Este gráfico mostra a evolução de R$1 ao seguir os sinais do modelo APENAS nos períodos de teste do Walk-Forward. É a simulação de performance mais honesta e realista.")
-        with self.st.spinner("Gerando performance agregada do WFV..."):
-            wfv_performance = modelo.gerar_performance_wfv_agregada(y_full, precos_full, t1)
-
-        if wfv_performance['trades'] > 0:
-            self._plot_wfv_equity_curve(wfv_performance)
-            cols = self.st.columns(4)
-            cols[0].metric("Retorno Total (WFV)", f"{wfv_performance['retorno_total']:.2%}")
-            cols[1].metric("Nº de Trades (WFV)", f"{wfv_performance['trades']}")
-            cols[2].metric("Taxa de Acerto (WFV)", f"{wfv_performance['win_rate']:.1%}")
-            cols[3].metric("Max Drawdown (WFV)", f"{wfv_performance['max_drawdown']:.2%}")
-        else:
-            self.st.warning(
-                "O modelo não gerou operações suficientes na validação Walk-Forward para construir uma curva de capital.")
-
-        self.st.divider()
-
-        # Seção 3: Análise Interna do Modelo
-        self.st.subheader("Análise Interna do Modelo (Baseado no Último Fold de Treino)")
-        col1, col2 = self.st.columns(2)
-        with col1:
-            self.st.markdown("**Variáveis Mais Influentes**")
-            self._plot_importancia_features(modelo)
-        with col2:
-            self.st.markdown("**Performance de Classificação**")
-            self._plot_matriz_confusao(y_full, modelo)
+        self.st.plotly_chart(fig, use_container_width=True)
 
     def _plot_wfv_equity_curve(self, performance_data: dict):
-        """Plota a curva de equidade agregada de todos os folds do WFV."""
         curva_capital = performance_data.get('equity_curve', [])
         fig = go.Figure()
         if len(curva_capital) > 1:
             fig.add_trace(
                 go.Scatter(x=list(range(len(curva_capital))), y=curva_capital, mode='lines', name='Capital (WFV)'))
         fig.update_layout(
-            title_text='Evolução do Capital na Simulação Walk-Forward (Out-of-Sample)',
-            xaxis_title='Nº de Operações (em ordem cronológica)',
+            title_text='Evolução do Capital (Walk-Forward)',
+            xaxis_title='Nº de Operações (ordem cronológica)',
             yaxis_title='Capital Relativo (Início = R$1)',
-            height=400
-        )
+            height=400)
         self.st.plotly_chart(fig, use_container_width=True)
 
-    def _render_tab_previsao_shap(self, X_full, modelo):
-        """ Renderiza a seção de explicabilidade da previsão usando SHAP."""
-        self.st.subheader("Explicabilidade da Previsão Atual (SHAP)")
-        self.st.info(
-            "Este gráfico de cascata (waterfall) mostra como cada variável (feature) contribuiu para a previsão final. Features em vermelho empurram a previsão para cima (mais chance de 'Oportunidade'), enquanto as azuis empurraram para baixo.")
+    def _render_secao_previsao_shap(self, X_full, modelo):
         if not hasattr(modelo, 'shap_explainer') or modelo.shap_explainer is None:
-            self.st.warning(
-                "O explainer SHAP não foi encontrado neste modelo. É necessário retreinar o modelo para gerar esta análise.")
+            self.st.warning("O explainer SHAP não foi encontrado neste modelo.")
             return
         with self.st.spinner("Calculando valores SHAP..."):
             X_last = X_full[modelo.features_selecionadas].tail(1)
@@ -270,30 +313,20 @@ class DashboardView:
             shap_explanation_raw = modelo.shap_explainer(X_last_scaled)
             idx_classe_1 = np.where(modelo.label_encoder.classes_ == 1)[0][0]
             shap_explanation_for_plot = shap_explanation_raw[0, :, idx_classe_1]
-            shap.initjs()
             fig, ax = plt.subplots(figsize=(10, 5))
             shap.plots.waterfall(shap_explanation_for_plot, max_display=15, show=False)
             plt.tight_layout()
             self.st.pyplot(fig)
             plt.close()
 
-    def _render_tab_saude_modelo(self, X_full, modelo):
-        """ Renderiza a seção de monitoramento de saúde do modelo, focando em data drift."""
-        self.st.subheader("Monitoramento de Saúde do Modelo (Data Drift)")
-        self.st.info(
-            "Aqui comparamos as características dos dados mais recentes com os dados usados para treinar o modelo. Diferenças significativas (drift) podem indicar que o modelo precisa ser retreinado.")
+    def _render_secao_saude_modelo(self, X_full, modelo):
         if not hasattr(modelo, 'training_data_profile') or modelo.training_data_profile is None:
-            self.st.warning(
-                "O perfil dos dados de treino não foi encontrado. Retreine o modelo para gerar esta análise.")
+            self.st.warning("O perfil dos dados de treino não foi encontrado.")
             return
         baseline_profile = pd.DataFrame(modelo.training_data_profile)
         X_recent = X_full[modelo.features_selecionadas].tail(60)
         X_recent_scaled = pd.DataFrame(modelo.scaler.transform(X_recent), columns=X_recent.columns)
-        current_profile = X_recent_scaled.describe()
-        self.st.markdown("**Comparativo Estatístico (Dados de Treino vs. Dados Recentes)**")
-        self.st.dataframe(pd.concat([baseline_profile, current_profile], axis=1,
-                                    keys=['Treino (Baseline)', 'Recente (Últimos 60 dias)']))
-        self.st.markdown("**Análise Visual de Drift das Features Principais**")
+
         key_features = Params.UI_DRIFT_KEY_FEATURES
         cols = self.st.columns(len(key_features))
         for i, feature in enumerate(key_features):
@@ -301,125 +334,115 @@ class DashboardView:
                 with cols[i]:
                     self._plot_drift_distribution(baseline_profile[feature], X_recent_scaled[feature], feature)
 
-    def _render_tab_mercado(self, precos_full, df_ibov, ticker):
-        """ Renderiza a seção de análise de mercado comparando o ativo com o IBOVESPA."""
-        self.st.subheader("Performance Relativa: Ativo vs. IBOVESPA (Último Ano)")
-        self.st.info(
-            "Este gráfico compara o crescimento de R$100 investidos no ativo selecionado versus no índice IBOVESPA. Ele ajuda a responder: a ação está com desempenho melhor ou pior que a média do mercado?")
-        self._plot_performance_vs_ibov(precos_full, df_ibov, ticker)
-
-    def _render_tab_dna(self, y_full, modelo):
-        """ Renderiza a seção que explora o 'DNA' do modelo: fatores decisórios e performance."""
-        self.st.subheader("O 'Cérebro' do Modelo: Fatores de Decisão")
-        self.st.info("Aqui exploramos o que o modelo considera importante e como sua performance foi validada.")
-        col1, col2 = self.st.columns(2)
-        with col1:
-            self.st.markdown("**Variáveis Mais Influentes**")
-            self.st.caption("O que o modelo 'olha' para tomar a decisão.")
-            self._plot_importancia_features(modelo)
-        with col2:
-            self.st.markdown("**Performance de Classificação (Última Validação)**")
-            self.st.caption("Como o modelo se saiu ao classificar os cenários.")
-            self._plot_matriz_confusao(y_full, modelo)
-        self._render_traducao_features()
-
-    def _render_tab_simulacao(self, X_full, precos_full, ticker, modelo):
-        """ Renderiza a seção de simulação de performance da estratégia."""
-        self.st.warning(
-            "Esta simulação é **'in-sample'** e tende a ser otimista. Serve principalmente para **ilustrar o comportamento visual** da estratégia ao longo do tempo.")
-        risk_analyzer = RiskAnalyzer()
-        df_sinais = modelo.prever_e_gerar_sinais(X_full, precos_full, ticker)
-        backtest_info = risk_analyzer.backtest_sinais(df_sinais)
-        self.st.plotly_chart(self._plot_precos_sinais(df_sinais, precos_full), use_container_width=True)
-        if backtest_info.get('trades', 0) > 0:
-            self._render_secao_metricas_simulacao(backtest_info)
-            self._render_secao_risco_capital(backtest_info)
-            self._render_secao_sensibilidade(X_full, precos_full, ticker, modelo)
-
-    def _render_secao_metricas_simulacao(self, backtest_info):
-        """ Renderiza a seção de métricas resumidas da simulação."""
-        self._exibir_metricas_backtest(backtest_info)
-        self.st.divider()
-
-    def _render_secao_risco_capital(self, backtest_info):
-        """ Renderiza a seção de análise de risco e capital."""
-        self.st.subheader("Análise de Risco e Capital")
-        col1, col2 = self.st.columns(2)
-        with col1: self.st.plotly_chart(self._plot_equidade(backtest_info), use_container_width=True)
-        with col2: self._plot_drawdown_curve(backtest_info)
-
-    def _render_secao_sensibilidade(self, X_full, precos_full, ticker, modelo):
-        """ Renderiza a seção de análise de sensibilidade do threshold operacional."""
-        with self.st.expander("Análise de Sensibilidade do Threshold de Operação"):
-            self.st.info(
-                "Este gráfico mostra como a performance (Sharpe Ratio) da estratégia mudaria com diferentes limiares de confiança. Um pico largo em torno do threshold escolhido (linha vermelha) indica uma estratégia robusta.")
-            with self.st.spinner("Analisando sensibilidade..."):
-                df_sensibilidade = self._analisar_sensibilidade_threshold(X_full, precos_full, ticker, modelo)
-                self._plot_sensibilidade_threshold(df_sensibilidade, modelo)
-
-    @st.cache_data
-    def _analisar_sensibilidade_threshold(_self, X: pd.DataFrame, precos: pd.Series, ticker: str,
-                                          _modelo: Any) -> pd.DataFrame:
-        risk_analyzer = RiskAnalyzer()
-        resultados = []
-        for thr in np.arange(0.40, 0.75, 0.025):
-            df_sinais = _modelo.prever_e_gerar_sinais(X, precos, ticker, threshold_override=thr)
-            backtest = risk_analyzer.backtest_sinais(df_sinais, verbose=False)
-            resultados.append({'threshold': thr, 'sharpe': backtest.get('sharpe', 0)})
-        return pd.DataFrame(resultados)
-
-    def _plot_sensibilidade_threshold(self, df_sensibilidade, modelo):
-        """ Plota o gráfico de sensibilidade do threshold vs. Sharpe Ratio."""
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_sensibilidade['threshold'], y=df_sensibilidade['sharpe'], mode='lines+markers',
-                                 name='Sharpe Ratio'))
-        fig.add_vline(x=modelo.threshold_operacional, line_width=2, line_dash="dash", line_color="red",
-                      annotation_text="Threshold Escolhido", annotation_position="top left")
-        fig.update_layout(title="Performance (Sharpe) vs. Threshold de Confiança", xaxis_title="Threshold de Confiança",
-                          yaxis_title="Sharpe Ratio Anualizado")
-        self.st.plotly_chart(fig, use_container_width=True)
-
     def _plot_drift_distribution(self, baseline_series, current_series, feature_name):
-        """ Plota a distribuição das features para detectar drift."""
         fig = go.Figure()
         fig.add_trace(go.Histogram(x=baseline_series, name='Treino', opacity=0.75, histnorm='probability density'))
         fig.add_trace(go.Histogram(x=current_series, name='Recente', opacity=0.75, histnorm='probability density'))
-        fig.update_layout(barmode='overlay', title_text=f'Drift de {feature_name}', height=300,
+        fig.update_layout(barmode='overlay', title_text=f'Drift de {feature_name}', height=250,
                           margin=dict(t=30, b=10, l=10, r=10))
-        ks_stat, p_value = ks_2samp(baseline_series.dropna(), current_series.dropna())
+        _, p_value = ks_2samp(baseline_series.dropna(), current_series.dropna())
         self.st.plotly_chart(fig, use_container_width=True)
         if p_value < 0.05:
-            self.st.error(f"P-valor (KS): {p_value:.3f}. Drift significativo detectado!")
+            self.st.error(f"P-valor: {p_value:.3f}. Drift detectado!")
         else:
-            self.st.success(f"P-valor (KS): {p_value:.3f}. Sem drift significativo.")
+            self.st.success(f"P-valor: {p_value:.3f}. Sem drift.")
 
-    def _render_diagnostico_confianca(self, modelo):
-        """ Renderiza a seção de diagnóstico de confiança do modelo."""
-        self.st.markdown("##### Diagnóstico de Confiança do Modelo (Histórico WFV)")
-        metricas = modelo.wfv_metrics
-        score, max_score, confianca_txt, cor = self._calcular_indice_confiabilidade(metricas)
-        percentual = (score / max_score) * 100
-        fig = go.Figure(go.Indicator(mode="gauge+number", value=percentual, title={
-            'text': f"<span style='font-size:1.5em;color:{cor}'>{confianca_txt}</span>"},
-                                     gauge={'axis': {'range': [None, 100]}, 'bar': {'color': cor}}))
-        fig.update_layout(height=200, margin=dict(l=20, r=20, t=50, b=20))
-        col1, col2 = self.st.columns([1, 2])
-        with col1: self.st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            self.st.metric("Score de Confiança", f"{score} / {max_score}",
-                           help="Pontuação baseada na performance histórica. Quanto maior, mais robusto o modelo se provou em testes.")
-            self.st.metric("Sharpe Médio", f"{metricas.get('sharpe_medio', 0):.2f}",
-                           help="Mede o retorno ajustado ao risco. Acima de 0.5 é bom, acima de 1.0 é ótimo.")
-            self.st.metric("F1-Score Preditivo", f"{metricas.get('f1_macro_medio', 0):.2%}",
-                           help="Mede a qualidade das previsões. Acima de 60% indica boa capacidade preditiva.")
-        with self.st.expander("Como este Score é Calculado?"):
-            self.st.markdown("""
-            O score é a soma de pontos baseados em 3 pilares da performance histórica do modelo (validação Walk-Forward):
-            - **Risco-Retorno (Sharpe Ratio):** `> 1.0`: **+3 pontos** (Excelente) | `> 0.3`: **+2 pontos** (Bom) | `> -0.1`: **+1 ponto** (Aceitável)
-            - **Qualidade Preditiva (F1-Score):** `> 65%`: **+3 pontos** (Ótima) | `> 55%`: **+2 pontos** (Boa) | `> 50%`: **+1 ponto** (Razoável)
-            - **Frequência de Trades:** `> 8 trades`: **+3 pontos** (Ativo) | `> 4 trades`: **+2 pontos** (Moderado) | `> 2.5 trades`: **+1 ponto** (Seletivo)
-            **Score Final:** `7-9`: **Alta Confiança** | `4-6`: **Média Confiança** | `0-3`: **Baixa Confiança**
-            """)
+    def _plot_previsao_recente(self, precos: pd.Series, sinal_positivo: bool):
+        df_recente = precos.tail(90).copy().to_frame(name='Preço')
+        df_recente['Tendência (20d)'] = df_recente['Preço'].rolling(20).mean()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_recente.index, y=df_recente['Preço'], mode='lines', name='Preço de Fechamento'))
+        fig.add_trace(
+            go.Scatter(x=df_recente.index, y=df_recente['Tendência (20d)'], mode='lines', name='Tendência (20 dias)',
+                       line={'dash': 'dot', 'color': 'gray'}))
+        if sinal_positivo:
+            ultimo_preco = df_recente['Preço'].iloc[-1]
+            proximo_dia = df_recente.index[-1] + pd.tseries.offsets.BDay(1)
+            fig.add_trace(go.Scatter(x=[proximo_dia], y=[ultimo_preco], mode='markers', name='Sinal de Oportunidade',
+                                     marker=dict(color='green', size=15, symbol='circle',
+                                                 line={'width': 2, 'color': 'darkgreen'})))
+        fig.update_layout(height=400, margin=dict(l=20, r=20, t=20, b=20),
+                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        self.st.plotly_chart(fig, use_container_width=True)
+
+    def _plot_wfv_signals_on_price(self, precos_full: pd.Series, performance_data: dict):
+        """Plota os sinais da validação WFV (out-of-sample) sobre o gráfico de preços."""
+        sinais_wfv = performance_data.get('sinais_wfv', [])
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=precos_full.index, y=precos_full, mode='lines', name='Preço de Fechamento'))
+
+        if sinais_wfv:
+            df_sinais = pd.DataFrame(sinais_wfv)
+            fig.add_trace(go.Scatter(
+                x=df_sinais['data'],
+                y=df_sinais['preco'],
+                mode='markers',
+                name='Sinal de Oportunidade (WFV)',
+                marker=dict(color='limegreen', size=8, symbol='triangle-up', line={'width': 1, 'color': 'darkgreen'})
+            ))
+
+        fig.update_layout(
+            title='Preço Histórico com Sinais Out-of-Sample (Validação Walk-Forward)',
+            xaxis_title='Data',
+            yaxis_title='Preço',
+            height=500,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        self.st.plotly_chart(fig, use_container_width=True)
+
+    def _plot_performance_vs_ibov(self, precos_ativo: pd.Series, df_ibov: pd.DataFrame, ticker: str):
+        if df_ibov is None or df_ibov.empty:
+            self.st.warning("Não foi possível carregar os dados do IBOVESPA para comparação.")
+            return
+        ibov_close = df_ibov.get('Close_IBOV', df_ibov.get('Close'))
+        if ibov_close is None:
+            self.st.error("Coluna de fechamento do IBOVESPA não encontrada.")
+            return
+        df_comp = pd.DataFrame(precos_ativo).rename(columns={'Close': 'Ativo'})
+        df_comp['IBOV'] = ibov_close
+        df_comp = df_comp.dropna().tail(252)
+        if df_comp.empty or len(df_comp) < 2:
+            self.st.warning("Não há dados suficientes para a comparação entre o ativo e o IBOVESPA.")
+            return
+        df_normalizado = (df_comp / df_comp.iloc[0]) * 100
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_normalizado.index, y=df_normalizado['Ativo'], mode='lines', name=ticker))
+        fig.add_trace(go.Scatter(x=df_normalizado.index, y=df_normalizado['IBOV'], mode='lines', name='IBOVESPA',
+                                 line={'dash': 'dot', 'color': 'gray'}))
+        fig.update_layout(title_text='Performance Normalizada (Base 100)',
+                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        self.st.plotly_chart(fig, use_container_width=True)
+
+    def _plot_importancia_features(self, modelo: Any):
+        try:
+            importances = modelo.modelo_final.feature_importances_
+            features = modelo.features_selecionadas
+            df_imp = pd.DataFrame({'feature': features, 'importance': importances}).sort_values('importance',
+                                                                                                ascending=False).head(
+                10).sort_values('importance', ascending=True)
+            fig = go.Figure(go.Bar(x=df_imp['importance'], y=df_imp['feature'], orientation='h'))
+            fig.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10))
+            self.st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            self.st.warning(f"Não foi possível gerar o gráfico de importância: {e}")
+
+    def _plot_matriz_confusao(self, y_full: pd.Series, modelo: Any):
+        try:
+            _, test_idx = list(modelo.cv_gen.split(modelo.X_scaled))[-1]
+            y_test_labels = modelo.label_encoder.inverse_transform(modelo.label_encoder.transform(y_full)[test_idx])
+            preds_labels = modelo.label_encoder.inverse_transform(
+                modelo.modelo_final.predict(modelo.X_scaled.iloc[test_idx]))
+            cm = confusion_matrix(y_test_labels, preds_labels, labels=[-1, 0, 1])
+            fig, ax = plt.subplots()
+            ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['BAIXA', 'NEUTRO', 'ALTA']).plot(ax=ax,
+                                                                                                         cmap='Blues',
+                                                                                                         values_format='d')
+            ax.set_title("Previsões vs. Realidade")
+            self.st.pyplot(fig)
+            self.st.caption("Matriz de confusão do último 'fold' da validação.")
+        except Exception as e:
+            self.st.warning(f"Não foi possível gerar a Matriz de Confusão: {e}")
 
     def _render_traducao_features(self):
         """ Renderiza a seção que traduz os fatores técnicos em termos simples."""
@@ -433,25 +456,21 @@ class DashboardView:
             * **`momentum_5d`, `momentum_21d`**: Medem o "impulso" do preço nas últimas 1 e 4 semanas. Um momentum alto e positivo indica que a tendência de alta está acelerando.
             * **`rsi_14` (Índice de Força Relativa)**: Um "termômetro" de 0 a 100 que mede se o ativo está "caro" (sobrecomprado, >70) ou "barato" (sobrevendido, <30) recentemente.
             * **`stoch_14` (Estocástico)**: Similar ao RSI, mede onde o preço de fechamento está em relação à sua faixa de variação recente (máximas e mínimas). Um valor alto (>80) indica que o ativo fechou perto de sua máxima, um sinal de força.
-
             ---
             #### 📊 Indicadores de Tendência
             * **`sma_ratio_10_50`, `sma_ratio_50_200`**: Comparam tendências de curto prazo com as de longo prazo. Quando a razão é > 1.0, a tendência de curto prazo é mais forte, sinalizando uma possível tendência de alta (um "cruzamento dourado").
             * **`macd_hist` (Histograma MACD)**: Mede a diferença entre duas médias móveis de tendência. Quando o histograma está positivo e crescendo, indica que o momentum de alta está se fortalecendo.
-
             ---
             #### 🎢 Indicadores de Volatilidade (Agitação do Mercado)
             * **`vol_21d`**: A medida estatística clássica da volatilidade. Informa o quão "nervoso" ou instável o preço do ativo tem sido no último mês.
             * **`vol_of_vol_10d` (Volatilidade da Volatilidade)**: Mede se a própria volatilidade está estável ou mudando rapidamente. Uma alta neste indicador pode sinalizar uma mudança no comportamento do mercado.
             * **`atr_14_norm` (ATR Normalizado)**: Mede o "tamanho médio do candle" dos últimos 14 dias, normalizado pelo preço. É uma medida pura do range de negociação diário.
             * **`bollinger_pct` (%B)**: Indica onde o preço atual está em relação às Bandas de Bollinger. Um valor > 1.0 significa que o preço fechou acima da banda superior (movimento forte, talvez sobrecomprado). Um valor < 0 significa que fechou abaixo da banda inferior (movimento fraco, talvez sobrevendido).
-
             ---
             #### 📉 Indicadores de Volume (Intensidade da Negociação)
             * **`volume_ratio_21d`**: Compara o volume de negociação de hoje com a média do último mês. Um valor > 1.0 indica um interesse excepcionalmente alto no ativo, o que pode validar um movimento de preço.
             * **`obv_norm_21d` (On-Balance Volume Normalizado)**: É um total acumulado do volume, que aumenta em dias de alta e diminui em dias de baixa. Mede a pressão de compra e venda acumulada.
             * **`cmf_20` (Chaikin Money Flow)**: Mede o fluxo de dinheiro para dentro ou para fora do ativo. Um valor positivo indica pressão compradora, enquanto um negativo indica pressão vendedora.
-
             ---
             #### 🌍 Indicadores de Mercado (Contexto)
             * **`correlacao_ibov_20d`**: Mede o quão "em sintonia" o ativo está com o índice Ibovespa. Um valor próximo de +1 indica que ele tende a seguir o mercado; próximo de -1, que ele se move na direção oposta.
@@ -472,7 +491,6 @@ class DashboardView:
 
     @staticmethod
     def _calcular_indice_confiabilidade(metricas: Dict[str, Any]) -> tuple[int, int, str, str]:
-        """ Calcula o índice de confiabilidade baseado nas métricas históricas do modelo."""
         score, max_score = 0, 9
         sharpe = metricas.get('sharpe_medio', 0)
         f1 = metricas.get('f1_macro_medio', 0)
@@ -495,118 +513,34 @@ class DashboardView:
             score += 2
         elif trades >= 2.5:
             score += 1
-        if score >= 7: return score, max_score, "Alta", "green"
-        if score >= 4: return score, max_score, "Média", "orange"
-        return score, max_score, "Baixa", "red"
+        if score >= 7: return score, max_score, "Alta Confiança", "green"
+        if score >= 4: return score, max_score, "Média Confiança", "orange"
+        return score, max_score, "Baixa Confiança", "red"
 
-    def _plot_gauge_confianca(self, probabilidade, modelo):
-        """ Plota o gráfico de gauge para a confiança na previsão atual."""
-        threshold = modelo.threshold_operacional
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number", value=probabilidade * 100,
-            title={'text': "Confiança na Alta (%)"},
-            gauge={'axis': {'range': [None, 100]}, 'bar': {'color': "#007bff"},
-                   'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': threshold * 100}}
-        ))
-        fig.update_layout(height=250, margin=dict(l=20, r=20, t=60, b=20))
-        self.st.plotly_chart(fig, use_container_width=True)
-        self.st.caption("A linha vermelha indica o limiar de confiança mínimo para operar.")
+    def _exibir_metricas_backtest(self, metricas: Dict[str, Any]):
+        self.st.subheader("Métricas de Performance da Simulação In-Sample")
+        cols = self.st.columns(4)
+        cols[0].metric("Retorno Total", f"{metricas.get('retorno_total', 0):.2%}")
+        cols[1].metric("Sharpe Ratio", f"{metricas.get('sharpe', 0):.2f}")
+        cols[2].metric("Sortino Ratio", f"{metricas.get('sortino', 0):.2f}")
+        cols[3].metric("Nº de Trades", f"{metricas.get('trades', 0)}")
+        col_q1, col_q2, col_q3, col_q4 = self.st.columns(4)
+        col_q1.metric("Taxa de Acerto", f"{metricas.get('win_rate', 0):.2%}")
+        col_q2.metric("Profit Factor", f"{metricas.get('profit_factor', 0):.2f}",
+                      help="Soma dos lucros / Soma das perdas. > 1.5 é bom, > 2.0 é ótimo.")
+        col_q3.metric("Payoff Ratio", f"{metricas.get('payoff_ratio', 0):.2f}",
+                      help="Ganho médio / Perda média. > 1.5 indica que os ganhos compensam as perdas.")
+        col_q4.metric("Max Drawdown", f"{metricas.get('max_drawdown', 0):.2%}",
+                      help="A maior queda percentual do capital a partir de um pico.")
 
-    def _plot_previsao_recente(self, precos: pd.Series, sinal_positivo: bool):
-        """ Plota o preço recente com a tendência e o sinal de oportunidade, se houver."""
-        df_recente = precos.tail(90).copy().to_frame(name='Preço')
-        df_recente['Tendência (20d)'] = df_recente['Preço'].rolling(20).mean()
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_recente.index, y=df_recente['Preço'], mode='lines', name='Preço de Fechamento'))
-        fig.add_trace(
-            go.Scatter(x=df_recente.index, y=df_recente['Tendência (20d)'], mode='lines', name='Tendência (20 dias)',
-                       line={'dash': 'dot', 'color': 'gray'}))
-        if sinal_positivo:
-            ultimo_preco = df_recente['Preço'].iloc[-1]
-            proximo_dia = df_recente.index[-1] + pd.tseries.offsets.BDay(1)
-            fig.add_trace(go.Scatter(x=[proximo_dia], y=[ultimo_preco], mode='markers', name='Sinal de Oportunidade',
-                                     marker=dict(color='green', size=15, symbol='circle',
-                                                 line={'width': 2, 'color': 'darkgreen'})))
-        fig.update_layout(height=400, margin=dict(l=20, r=20, t=20, b=20),
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        self.st.plotly_chart(fig, use_container_width=True)
-
-    def _plot_performance_vs_ibov(self, precos_ativo: pd.Series, df_ibov: pd.DataFrame, ticker: str):
-        """ Plota a performance do ativo versus o IBOVESPA."""
-        if df_ibov is None or df_ibov.empty:
-            self.st.warning("Não foi possível carregar os dados do IBOVESPA para comparação.")
-            return
-        if 'Close_IBOV' in df_ibov.columns:
-            ibov_close = df_ibov['Close_IBOV']
-        elif 'Close' in df_ibov.columns:
-            ibov_close = df_ibov['Close']
-        else:
-            self.st.error("Coluna de fechamento do IBOVESPA não encontrada.")
-            return
-        df_comp = pd.DataFrame(precos_ativo).rename(columns={'Close': 'Ativo'})
-        df_comp['IBOV'] = ibov_close
-        df_comp = df_comp.dropna().tail(252)
-        if df_comp.empty or len(df_comp) < 2:
-            self.st.warning("Não há dados suficientes para a comparação entre o ativo e o IBOVESPA.")
-            return
-        df_normalizado = (df_comp / df_comp.iloc[0]) * 100
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_normalizado.index, y=df_normalizado['Ativo'], mode='lines', name=ticker))
-        fig.add_trace(go.Scatter(x=df_normalizado.index, y=df_normalizado['IBOV'], mode='lines', name='IBOVESPA',
-                                 line={'dash': 'dot', 'color': 'gray'}))
-        fig.update_layout(title_text='Performance Normalizada (Base 100)',
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        self.st.plotly_chart(fig, use_container_width=True)
-
-    def _plot_drawdown_curve(self, backtest_info: Dict[str, Any]):
-        """Plota a curva de drawdown do backtest."""
-        drawdown_series = backtest_info.get('drawdown_series', [])
-        if not drawdown_series: return
-        df_dd = pd.DataFrame(drawdown_series, columns=['Drawdown'])
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_dd.index, y=df_dd['Drawdown'], fill='tozeroy', name='Drawdown', line_color='red'))
-        fig.update_yaxes(tickformat=".1%")
-        fig.update_layout(title_text='Curva de Drawdown da Estratégia', xaxis_title='Nº da Operação',
-                          yaxis_title='Queda do Pico', height=350)
-        self.st.plotly_chart(fig, use_container_width=True)
-
-    def _plot_matriz_confusao(self, y_full: pd.Series, modelo: Any):
-        """Plota a matriz de confusão do último fold da validação walk-forward."""
-        try:
-            X_full_scaled = modelo.X_scaled
-            y_full_encoded = modelo.label_encoder.transform(y_full)
-            _, test_idx = list(modelo.cv_gen.split(X_full_scaled))[-1]
-            X_test, y_test_encoded = X_full_scaled.iloc[test_idx], y_full_encoded[test_idx]
-            y_test_labels = modelo.label_encoder.inverse_transform(y_test_encoded)
-            preds_labels = modelo.label_encoder.inverse_transform(modelo.modelo_final.predict(X_test))
-            cm = confusion_matrix(y_test_labels, preds_labels, labels=[-1, 0, 1])
-            fig, ax = plt.subplots()
-            ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['BAIXA', 'NEUTRO', 'ALTA']).plot(ax=ax,
-                                                                                                         cmap='Blues',
-                                                                                                         values_format='d')
-            ax.set_title("Previsões vs. Realidade")
-            self.st.pyplot(fig)
-            self.st.caption("Matriz de confusão do último 'fold' da validação.")
-        except Exception as e:
-            self.st.warning(f"Não foi possível gerar a Matriz de Confusão: {e}")
-
-    def _plot_importancia_features(self, modelo: Any):
-        """Plota as 10 features mais importantes do modelo."""
-        try:
-            importances = modelo.modelo_final.feature_importances_
-            features = modelo.features_selecionadas
-            df_imp = pd.DataFrame({'feature': features, 'importance': importances}).sort_values('importance',
-                                                                                                ascending=False).head(
-                10).sort_values('importance', ascending=True)
-            fig = go.Figure(go.Bar(x=df_imp['importance'], y=df_imp['feature'], orientation='h'))
-            fig.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10))
-            self.st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            self.st.warning(f"Não foi possível gerar o gráfico de importância: {e}")
+    def _render_secao_risco_capital(self, backtest_info):
+        self.st.subheader("Análise de Risco e Capital (In-Sample)")
+        col1, col2 = self.st.columns(2)
+        with col1: self.st.plotly_chart(self._plot_equidade(backtest_info), use_container_width=True)
+        with col2: self._plot_drawdown_curve(backtest_info)
 
     @staticmethod
     def _plot_precos_sinais(df_sinais, precos):
-        """Plota os preços históricos com os sinais de operação gerados."""
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=precos.index, y=precos, mode='lines', name='Preço'))
         sinais_operar = df_sinais[df_sinais['sinal'] == 1]
@@ -618,29 +552,8 @@ class DashboardView:
                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         return fig
 
-    def _exibir_metricas_backtest(self, metricas: Dict[str, Any]):
-        """Exibe as principais métricas do backtest em formato de cards."""
-        self.st.subheader("Métricas de Performance da Simulação")
-        cols = self.st.columns(4)
-        cols[0].metric("Retorno Total", f"{metricas.get('retorno_total', 0):.2%}")
-        cols[1].metric("Sharpe Ratio", f"{metricas.get('sharpe', 0):.2f}",
-                       help="Mede o retorno ajustado por toda a volatilidade (risco total).")
-        cols[2].metric("Sortino Ratio", f"{metricas.get('sortino', 0):.2f}",
-                       help="Mede o retorno ajustado pela volatilidade negativa (risco de perdas).")
-        cols[3].metric("Nº de Trades", f"{metricas.get('trades', 0)}")
-        self.st.subheader("Métricas de Qualidade dos Trades")
-        col_q1, col_q2, col_q3 = self.st.columns(3)
-        col_q1.metric("Taxa de Acerto", f"{metricas.get('win_rate', 0):.2%}")
-        col_q2.metric("Profit Factor", f"{metricas.get('profit_factor', 0):.2f}",
-                      help="Soma dos lucros / Soma das perdas. > 1.5 é bom, > 2.0 é ótimo.")
-        col_q3.metric("Payoff Ratio", f"{metricas.get('payoff_ratio', 0):.2f}",
-                      help="Ganho médio / Perda média. > 1.5 indica que os ganhos compensam as perdas.")
-        self.st.metric("Max Drawdown", f"{metricas.get('max_drawdown', 0):.2%}",
-                       help="A maior queda percentual do capital a partir de um pico.")
-
     @staticmethod
     def _plot_equidade(backtest_info: Dict[str, Any]) -> go.Figure:
-        """Plota a curva de equidade (capital ao longo do tempo) da estratégia."""
         curva_equidade = backtest_info.get('equity_curve', [])
         fig = go.Figure()
         if len(curva_equidade) > 1:
@@ -649,3 +562,47 @@ class DashboardView:
         fig.update_layout(title_text='Evolução do Capital da Estratégia', xaxis_title='Nº da Operação',
                           yaxis_title='Capital Relativo', height=350)
         return fig
+
+    def _plot_drawdown_curve(self, backtest_info: Dict[str, Any]):
+        drawdown_series = backtest_info.get('drawdown_series', [])
+        if not drawdown_series: return
+        df_dd = pd.DataFrame(drawdown_series, columns=['Drawdown'])
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_dd.index, y=df_dd['Drawdown'], fill='tozeroy', name='Drawdown', line_color='red'))
+        fig.update_yaxes(tickformat=".1%")
+        fig.update_layout(title_text='Curva de Drawdown da Estratégia', xaxis_title='Nº da Operação',
+                          yaxis_title='Queda do Pico', height=350)
+        self.st.plotly_chart(fig, use_container_width=True)
+
+    def _render_secao_sensibilidade(self, X_full, precos_full, ticker, modelo):
+        with self.st.expander("Análise de Sensibilidade do Threshold de Operação"):
+            self.st.info(
+                "Este gráfico mostra como a performance (Sharpe Ratio) da estratégia mudaria com diferentes limiares de confiança. Um pico largo em torno do threshold escolhido (linha vermelha) indica uma estratégia robusta.")
+            with self.st.spinner("Analisando sensibilidade..."):
+                df_sensibilidade = self._analisar_sensibilidade_threshold(X_full, precos_full, ticker, modelo)
+                self._plot_sensibilidade_threshold(df_sensibilidade, modelo)
+
+    @st.cache_data
+    def _analisar_sensibilidade_threshold(_self, X: pd.DataFrame, precos: pd.Series, ticker: str,
+                                          _modelo: Any) -> pd.DataFrame:
+        risk_analyzer = RiskAnalyzer()
+        resultados = []
+        for thr in np.arange(0.40, 0.75, 0.025):
+            df_sinais = _modelo.prever_e_gerar_sinais(X, precos, ticker, threshold_override=thr)
+            backtest = risk_analyzer.backtest_sinais(df_sinais, verbose=False)
+            resultados.append({'threshold': thr, 'sharpe': backtest.get('sharpe', 0)})
+        return pd.DataFrame(resultados)
+
+    def _plot_sensibilidade_threshold(self, df_sensibilidade, modelo):
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_sensibilidade['threshold'], y=df_sensibilidade['sharpe'], mode='lines+markers',
+                                 name='Sharpe Ratio'))
+        fig.add_vline(x=modelo.threshold_operacional, line_width=2, line_dash="dash", line_color="red",
+                      annotation_text="Threshold Escolhido", annotation_position="top left")
+        fig.update_layout(title="Performance (Sharpe) vs. Threshold de Confiança", xaxis_title="Threshold de Confiança",
+                          yaxis_title="Sharpe Ratio Anualizado")
+        self.st.plotly_chart(fig, use_container_width=True)
+
+    def _render_secao_metricas_simulacao(self, backtest_info):
+        self._exibir_metricas_backtest(backtest_info)
+        self.st.divider()
