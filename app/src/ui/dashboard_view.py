@@ -47,7 +47,7 @@ class DashboardView:
             self.st.write(
                 "- **Performance Passada Não Garante Futuro:** O mercado é dinâmico e padrões podem não se repetir.\n"
                 "- **Não é uma Bola de Cristal:** Fatores macroeconômicos e notícias não estão no escopo do modelo.\n"
-                "- **Use como Ferramenta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
+                "- **Use como Ferramienta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
 
     def render_main_layout(self, ticker, modelo, dados, validacao_recente, metricas_validacao):
         """Renderiza o layout principal, incluindo o painel de veredito e as abas de análise profunda."""
@@ -97,15 +97,15 @@ class DashboardView:
             st.markdown(f"<h2 style='text-align: center;'>{recomendacao}</h2>", unsafe_allow_html=True)
 
         cols[1].metric("Probabilidade de Alta", f"{previsao['probabilidade']:.1%}",
-                       help="Probabilidade estimada pelo modelo para a ocorrência de um evento de alta.")
+                       help="Probabilidade estimada pelo modelo para a ocorrência de um evento de alta, conforme a metodologia da Tripla Barreira.")
         cols[2].metric("Score de Robustez", f"{score}/{max_score}",
-                       help="Pontuação de 0 a 9 que resume a robustez histórica do modelo para este ativo, com base na validação Walk-Forward.")
+                       help="Pontuação de 0 a 9 que resume a robustez histórica do modelo para este ativo, com base na validação Walk-Forward. Scores mais altos indicam maior confiança histórica.")
         cols[3].metric("Sharpe Médio (WFV)", f"{wfv_metrics.get('sharpe_medio', 0):.2f}",
-                       help="Mede o retorno ajustado ao risco na validação mais robusta (Walk-Forward). Acima de 0.5 é bom.")
+                       help="Mede o retorno ajustado ao risco na validação mais robusta (Walk-Forward). Acima de 0.5 é bom; acima de 1.0 é excelente.")
 
         wfv_performance = modelo.gerar_performance_wfv_agregada(dados['y_full'], dados['precos_full'], dados['t1'])
         cols[4].metric("Taxa de Acerto (WFV)", f"{wfv_performance.get('win_rate', 0):.1%}",
-                       help="Percentual de acertos dos sinais de 'Oportunidade' gerados durante a validação Walk-Forward.")
+                       help="Percentual de operações que resultaram em lucro durante a validação Walk-Forward. Um valor consistentemente acima de 50% é desejável.")
         st.markdown("---")
 
     def _render_tab_diagnostico_previsao(self, modelo, dados, validacao_recente, metricas_validacao):
@@ -139,11 +139,11 @@ class DashboardView:
 
         if wfv_performance['trades'] > 0:
             cols = self.st.columns(4)
-            cols[0].metric("Retorno Total (WFV)", f"{wfv_performance['retorno_total']:.2%}")
-            cols[1].metric("Nº de Trades (WFV)", f"{wfv_performance['trades']}")
-            cols[2].metric("Taxa de Acerto (WFV)", f"{wfv_performance['win_rate']:.1%}")
+            cols[0].metric("Retorno Total (WFV)", f"{wfv_performance['retorno_total']:.2%}", help="Retorno percentual acumulado ao final da validação Walk-Forward. Representa o ganho/perda total da estratégia na simulação mais realista.")
+            cols[1].metric("Nº de Trades (WFV)", f"{wfv_performance['trades']}", help="Número total de operações executadas na validação WFV. Um número maior de trades (>50) confere maior robustez estatística aos resultados.")
+            cols[2].metric("Taxa de Acerto (WFV)", f"{wfv_performance['win_rate']:.1%}", help="Percentual de operações que resultaram em lucro durante a validação Walk-Forward. Um valor consistentemente acima de 50% é desejável.")
             cols[3].metric("Max Drawdown (WFV)", f"{wfv_performance['max_drawdown']:.2%}",
-                           help="A maior queda percentual do capital a partir de um pico durante a simulação WFV. Mede o pior cenário de perda histórica.")
+                           help="A maior queda percentual do capital a partir de um pico durante a simulação WFV. Mede o pior cenário de perda histórica. Abaixo de -20% exige atenção.")
 
             col_chart1, col_chart2 = self.st.columns(2)
             with col_chart1:
@@ -178,6 +178,7 @@ class DashboardView:
 
         self.st.divider()
         self.st.subheader("DNA do Modelo: Fatores e Performance de Classificação")
+        self.st.caption("Esta seção aprofunda no funcionamento interno do modelo, revelando quais fatores são mais importantes para sua decisão e quão bem ele consegue distinguir entre os diferentes cenários de mercado (alta, baixa e neutro).")
         col1, col2 = self.st.columns(2)
         with col1:
             self.st.markdown("**Variáveis Mais Influentes**")
@@ -195,6 +196,8 @@ class DashboardView:
         backtest_info = risk_analyzer.backtest_sinais(df_sinais)
 
         self.st.plotly_chart(self._plot_precos_sinais(df_sinais, dados['precos_full']), use_container_width=True)
+        self.st.caption("Como interpretar: Este gráfico mostra o histórico de preços do ativo com marcadores verdes nos dias em que o modelo teria sinalizado uma 'Oportunidade', com base em todos os dados (visão otimista).")
+
 
         if backtest_info.get('trades', 0) > 0:
             self._render_secao_metricas_simulacao(backtest_info)
@@ -213,16 +216,16 @@ class DashboardView:
         if num_oportunidades > 0:
             col1, col2, col3 = self.st.columns(3)
             col1.metric("Taxa de Acerto (Oportunidades)", f"{metricas.get('taxa_acerto', 0):.1%}",
-                        help="Dos sinais de 'OPORTUNIDADE' gerados, qual % foi seguido por uma variação diária positiva.")
+                         help="Dos sinais de 'OPORTUNIDADE' gerados, qual % foi seguido por uma variação diária positiva.")
             col2.metric("Assertividade Geral", f"{metricas.get('assertividade_geral', 0):.1%}",
                         help="Percentual de dias em que o modelo tomou a decisão correta (acertando altas ou evitando perdas).")
             col3.metric("Retorno Médio Diário (nos Acertos)", f"{metricas.get('retorno_medio_acertos', 0):.2%}",
-                        help="A variação média do preço no dia seguinte para os sinais de 'OPORTUNIDADE' que o modelo acertou.")
+                         help="A variação média do preço no dia seguinte para os sinais de 'OPORTUNIDADE' que o modelo acertou.")
         else:
             col1, col2 = self.st.columns([1, 3])
             with col1:
                 self.st.metric("Assertividade Geral", f"{metricas.get('assertividade_geral', 0):.1%}",
-                               help="Percentual de dias em que o modelo tomou a decisão correta (neste caso, o quão bem ele evitou perdas).")
+                                 help="Percentual de dias em que o modelo tomou a decisão correta (neste caso, o quão bem ele evitou perdas).")
             with col2:
                 self.st.info(
                     "O modelo não identificou sinais de 'Oportunidade' no período recente. A 'Assertividade Geral' reflete o quão bem ele evitou perdas nos dias em que recomendou observar.",
@@ -318,6 +321,8 @@ class DashboardView:
             height=400
         )
         self.st.plotly_chart(fig, use_container_width=True)
+        self.st.caption("Como interpretar: Este gráfico mostra a evolução do retorno ajustado ao risco. Uma linha que se mantém consistentemente acima de 0.5 (bom) ou 1.0 (ótimo) indica uma performance robusta e estável ao longo do tempo.")
+
 
     def _plot_wfv_equity_curve(self, performance_data: dict):
         curva_capital = performance_data.get('equity_curve', [])
@@ -331,6 +336,8 @@ class DashboardView:
             yaxis_title='Capital Relativo (Início = R$1)',
             height=400)
         self.st.plotly_chart(fig, use_container_width=True)
+        self.st.caption("Como interpretar: Uma curva consistentemente ascendente indica uma estratégia lucrativa. A inclinação representa a taxa de retorno. Períodos planos indicam que o modelo não encontrou oportunidades.")
+
 
     def _render_secao_previsao_shap(self, X_full, modelo):
         if not hasattr(modelo, 'shap_explainer') or modelo.shap_explainer is None:
@@ -348,9 +355,9 @@ class DashboardView:
             self.st.pyplot(fig)
             plt.close()
             self.st.caption("""
-                        **Como ler este gráfico:** O valor `f(x)` final representa a "Probabilidade de Alta".
-                        As **barras azuis** são os fatores que empurraram a probabilidade para cima (contribuíram para um sinal de OPORTUNIDADE).
-                        As **barras vermelhas** empurraram a probabilidade para baixo.
+                **Como ler este gráfico:** O valor `f(x)` final representa a "Probabilidade de Alta".
+                As **barras azuis** são os fatores que empurraram a probabilidade para cima (contribuíram para um sinal de OPORTUNIDADE).
+                As **barras vermelhas** empurraram a probabilidade para baixo.
                         """)
 
     def _render_secao_saude_modelo(self, X_full, modelo):
@@ -393,10 +400,10 @@ class DashboardView:
             ultimo_preco = df_recente['Preço'].iloc[-1]
             proximo_dia = df_recente.index[-1] + pd.tseries.offsets.BDay(1)
             fig.add_trace(go.Scatter(x=[proximo_dia], y=[ultimo_preco], mode='markers', name='Sinal de Oportunidade',
-                                     marker=dict(color='green', size=15, symbol='circle',
+                                      marker=dict(color='green', size=15, symbol='circle',
                                                  line={'width': 2, 'color': 'darkgreen'})))
         fig.update_layout(height=400, margin=dict(l=20, r=20, t=20, b=20),
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         self.st.plotly_chart(fig, use_container_width=True)
 
     def _plot_wfv_signals_on_price(self, precos_full: pd.Series, performance_data: dict):
@@ -424,6 +431,7 @@ class DashboardView:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         self.st.plotly_chart(fig, use_container_width=True)
+        self.st.caption("Como interpretar: Os triângulos verdes mostram os pontos exatos onde o modelo teria identificado uma oportunidade de entrada durante a simulação mais realista (Walk-Forward). Isso ajuda a visualizar o comportamento do modelo em diferentes condições de mercado.")
 
     def _plot_performance_vs_ibov(self, precos_ativo: pd.Series, df_ibov: pd.DataFrame, ticker: str):
         if df_ibov is None or df_ibov.empty:
@@ -554,24 +562,29 @@ class DashboardView:
     def _exibir_metricas_backtest(self, metricas: Dict[str, Any]):
         self.st.subheader("Métricas de Performance da Simulação In-Sample")
         cols = self.st.columns(4)
-        cols[0].metric("Retorno Total", f"{metricas.get('retorno_total', 0):.2%}")
-        cols[1].metric("Sharpe Ratio", f"{metricas.get('sharpe', 0):.2f}")
-        cols[2].metric("Sortino Ratio", f"{metricas.get('sortino', 0):.2f}")
-        cols[3].metric("Nº de Trades", f"{metricas.get('trades', 0)}")
+        cols[0].metric("Retorno Total", f"{metricas.get('retorno_total', 0):.2%}", help="O retorno percentual acumulado ao final de toda a simulação, assumindo que os lucros são reinvestidos.")
+        cols[1].metric("Sharpe Ratio", f"{metricas.get('sharpe', 0):.2f}", help="Mede o retorno ajustado ao risco. Acima de 1.0 é considerado excelente, pois indica que os retornos superam a volatilidade de forma consistente.")
+        cols[2].metric("Sortino Ratio", f"{metricas.get('sortino', 0):.2f}", help="Similar ao Sharpe, mas foca apenas no risco de perdas (volatilidade negativa). Um valor acima de 2.0 é excelente, pois indica boa proteção contra perdas.")
+        cols[3].metric("Nº de Trades", f"{metricas.get('trades', 0)}", help="Número total de operações de compra e venda executadas. Um número maior de trades (>50) confere maior robustez estatística aos resultados.")
         col_q1, col_q2, col_q3, col_q4 = self.st.columns(4)
-        col_q1.metric("Taxa de Acerto", f"{metricas.get('win_rate', 0):.2%}")
+        col_q1.metric("Taxa de Acerto", f"{metricas.get('win_rate', 0):.2%}", help="Percentual de operações que resultaram em lucro. Um valor consistentemente acima de 50% é desejável.")
         col_q2.metric("Profit Factor", f"{metricas.get('profit_factor', 0):.2f}",
                       help="Quanto o sistema ganhou para cada R$ 1 que perdeu. Ex: um fator de 2.0 significa que os lucros totais foram o dobro das perdas totais. Acima de 1.5 é bom.")
         col_q3.metric("Payoff Ratio", f"{metricas.get('payoff_ratio', 0):.2f}",
-                      help="Compara o tamanho da operação vencedora média com a perdedora média. Um payoff de 2.0 significa que, em média, um trade de ganho foi 2x maior que um trade de perda.")
+                      help="Compara o tamanho da operação vencedora média com a perdedora média. Um payoff de 2.0 significa que, em média, um trade de ganho foi 2x maior que um trade de perda. Acima de 1.5 é considerado bom.")
         col_q4.metric("Max Drawdown", f"{metricas.get('max_drawdown', 0):.2%}",
-                      help="A maior queda percentual do capital a partir de um pico.")
+                      help="A maior queda percentual do capital a partir de um pico. Mede o pior cenário de perda histórica. Abaixo de -20% exige atenção.")
 
     def _render_secao_risco_capital(self, backtest_info):
         self.st.subheader("Análise de Risco e Capital (In-Sample)")
+        self.st.caption("Esta seção analisa visualmente a jornada do capital e os períodos de perdas ao longo da simulação completa.")
         col1, col2 = self.st.columns(2)
-        with col1: self.st.plotly_chart(self._plot_equidade(backtest_info), use_container_width=True)
-        with col2: self._plot_drawdown_curve(backtest_info)
+        with col1:
+            self.st.plotly_chart(self._plot_equidade(backtest_info), use_container_width=True)
+            self.st.caption("Interpretação: A curva de equidade mostra a evolução do capital ao longo das operações. O ideal é uma tendência de alta constante com poucas quedas (drawdowns).")
+        with col2:
+            self._plot_drawdown_curve(backtest_info)
+
 
     @staticmethod
     def _plot_precos_sinais(df_sinais, precos):
@@ -583,7 +596,7 @@ class DashboardView:
                 go.Scatter(x=sinais_operar.index, y=sinais_operar['preco'], mode='markers', name='Oportunidade',
                            marker=dict(color='limegreen', size=6, symbol='triangle-up')))
         fig.update_layout(title_text='Preços Históricos e Sinais Gerados na Simulação',
-                          legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         return fig
 
     @staticmethod
@@ -593,7 +606,7 @@ class DashboardView:
         if len(curva_equidade) > 1:
             fig.add_trace(
                 go.Scatter(x=list(range(len(curva_equidade))), y=curva_equidade, mode='lines', name='Capital'))
-        fig.update_layout(title_text='Evolução do Capital da Estratégia', xaxis_title='Nº da Operação',
+        fig.update_layout(title_text='Evolução do Capital (Curva de Equidade)', xaxis_title='Nº da Operação',
                           yaxis_title='Capital Relativo', height=350)
         return fig
 
@@ -604,9 +617,10 @@ class DashboardView:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_dd.index, y=df_dd['Drawdown'], fill='tozeroy', name='Drawdown', line_color='red'))
         fig.update_yaxes(tickformat=".1%")
-        fig.update_layout(title_text='Curva de Drawdown da Estratégia', xaxis_title='Nº da Operação',
+        fig.update_layout(title_text='Curva de Drawdown (Períodos de Perda)', xaxis_title='Nº da Operação',
                           yaxis_title='Queda do Pico', height=350)
         self.st.plotly_chart(fig, use_container_width=True)
+        self.st.caption("Interpretação: O gráfico de drawdown mostra os períodos de perda. O objetivo é ter 'vales' rasos e curtos, indicando que as perdas são pequenas e a recuperação é rápida.")
 
     def _render_secao_sensibilidade(self, X_full, precos_full, ticker, modelo):
         with self.st.expander("Análise de Sensibilidade do Threshold de Operação"):
