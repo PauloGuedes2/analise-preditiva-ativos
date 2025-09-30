@@ -60,11 +60,12 @@ class Params:
     # --- Configurações de UI ---
     UI_TAB_NAMES: List[str] = [
         "🎯 **Resumo Executivo**",
-        "🔍 **Análise da Previsão**",
+        "✅ **Avaliação do Modelo**",
+        "🔍 **Análise da Previsão (SHAP)**",
         "🩺 **Saúde do Modelo**",
         "📈 **Análise de Mercado**",
-        "🧬 **DNA do Modelo**",
-        "📊 **Simulação de Performance**"
+        "📊 **Simulação (In-Sample)**"
     ]
 
     UI_DRIFT_KEY_FEATURES: List[str] = ['rsi_14', 'vol_21d', 'sma_ratio_10_50', 'momentum_5d']
+    UI_VALIDATION_DAYS: int = 10

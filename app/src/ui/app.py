@@ -1,6 +1,9 @@
 import os
 import time
 import atexit
+
+import numpy as np
+import pandas as pd
 import streamlit as st
 from joblib import load
 from typing import Any
@@ -79,11 +82,70 @@ class DashboardTrading:
             st.error(f"Não foi possível carregar dados para {self.ticker_selecionado}.")
             st.stop()
 
-        X_full, y_full, precos_full, _, X_untruncated = feature_engineer.preparar_dataset(df_ticker, df_ibov,
-                                                                                          self.ticker_selecionado)
+        X_full, y_full, precos_full, t1, X_untruncated = feature_engineer.preparar_dataset(
+            df_ticker, df_ibov, self.ticker_selecionado
+        )
         previsao = self.modelo_carregado.prever_direcao(X_untruncated.tail(1), self.ticker_selecionado)
 
-        return df_ticker, df_ibov, X_full, y_full, precos_full, previsao
+        return df_ticker, df_ibov, X_full, y_full, precos_full, previsao, t1
+
+    def _gerar_validacao_recente(self, X_full: pd.DataFrame, y_full: pd.Series, precos_full: pd.Series) -> tuple[list, dict]:
+        """
+        Gera previsões para os últimos N dias, compara com os resultados reais,
+        e calcula métricas de resumo da performance.
+        """
+        num_dias = Params.UI_VALIDATION_DAYS
+        if len(X_full) < num_dias or len(precos_full) <= num_dias:
+            return [], {}
+
+        resultados_validacao = []
+        acertos_retornos = []
+        num_oportunidades = 0
+        num_acertos = 0
+
+        ultimos_dias = X_full.index[-num_dias:]
+
+        for dia in ultimos_dias:
+            dados_dia = X_full.loc[dia:dia]
+            previsao = self.modelo_carregado.prever_direcao(dados_dia, self.ticker_selecionado)
+
+            resultado_real = y_full.loc[dia]
+            acertou = (previsao['should_operate'] and resultado_real == 1)
+
+            # Calcula a variação real do dia seguinte
+            try:
+                idx_atual = precos_full.index.get_loc(dia)
+                # Garante que não estamos no último dia do histórico de preços
+                if idx_atual + 1 < len(precos_full):
+                    variacao_real = (precos_full.iloc[idx_atual + 1] / precos_full.iloc[idx_atual]) - 1
+                else:
+                    variacao_real = np.nan
+            except (KeyError, IndexError):
+                variacao_real = np.nan
+
+            if previsao['should_operate']:
+                num_oportunidades += 1
+                if acertou:
+                    num_acertos += 1
+                    if not np.isnan(variacao_real):
+                        acertos_retornos.append(variacao_real)
+
+            resultados_validacao.append({
+                "Data": dia.strftime('%d/%m/%Y'),
+                "Sinal do Modelo": "🟢 OPORTUNIDADE" if previsao['should_operate'] else "🟡 OBSERVAR",
+                "Confiança do Modelo": previsao['probabilidade'],
+                "Resultado Real (Tripla Barreira)": resultado_real,
+                "Variação Diária Real": variacao_real,
+                "Performance": "✅ ACERTOU" if acertou else ("❌ ERROU" if previsao['should_operate'] else "⚪️ Neutro")
+            })
+
+        # Calcula as métricas de resumo
+        metricas = {
+            'taxa_acerto': (num_acertos / num_oportunidades) if num_oportunidades > 0 else 0,
+            'retorno_medio_acertos': np.mean(acertos_retornos) if acertos_retornos else 0
+        }
+
+        return resultados_validacao, metricas
 
     def executar(self):
         """Orquestra o fluxo principal: processa dados e delega a renderização para a View."""
@@ -95,7 +157,9 @@ class DashboardTrading:
 
             with st.spinner("Processando dados e gerando análise..."):
                 (df_ticker, df_ibov, X_full, y_full,
-                 precos_full, previsao) = self._processar_dados_e_previsao()
+                 precos_full, previsao, t1) = self._processar_dados_e_previsao()  # <-- Capture t1
+
+                validacao_recente, metricas_validacao = self._gerar_validacao_recente(X_full, y_full, precos_full)
 
             # Delega a renderização para a classe View
             if self.relatorio_btn:
@@ -112,7 +176,9 @@ class DashboardTrading:
                     modelo=self.modelo_carregado,
                     previsao=previsao,
                     X_full=X_full, y_full=y_full, precos_full=precos_full,
-                    df_ibov=df_ibov, df_ticker=df_ticker
+                    df_ibov=df_ibov, df_ticker=df_ticker, t1=t1,
+                    validacao_recente=validacao_recente,
+                    metricas_validacao=metricas_validacao
                 )
         else:
             self.view.render_tela_boas_vindas()

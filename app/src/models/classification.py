@@ -1,6 +1,6 @@
 import os
 
-os.environ['LIGHTGBM_VERBOSE'] = '-1' # Suprime logs verbosos do LightGBM
+os.environ['LIGHTGBM_VERBOSE'] = '-1'  # Suprime logs verbosos do LightGBM
 
 from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
@@ -17,7 +17,7 @@ from src.logger.logger import logger
 from src.models.validation import PurgedKFoldCV
 from src.backtesting.risk_analyzer import RiskAnalyzer
 
-optuna.logging.set_verbosity(optuna.logging.WARNING) # Suprime logs verbosos do Optuna
+optuna.logging.set_verbosity(optuna.logging.WARNING)  # Suprime logs verbosos do Optuna
 
 
 class ClassificadorTrading:
@@ -158,6 +158,73 @@ class ClassificadorTrading:
             sharpe_scores.append(backtest_results.get('sharpe', -1.0))
 
         return np.mean(sharpe_scores) if sharpe_scores else -1.0
+
+
+    def gerar_performance_wfv_agregada(self, y: pd.Series, precos: pd.Series, t1: pd.Series) -> dict:
+        """
+        Usa os dados já processados do modelo treinado para agregar os retornos de todos
+        os folds de teste de forma consistente, garantindo o alinhamento dos índices.
+        """
+        logger.info("Gerando performance agregada da Validação Walk-Forward...")
+        risk_analyzer = RiskAnalyzer()
+
+        if self.X_scaled is None:
+            logger.error("Atributo X_scaled não definido. Rode .treinar() primeiro.")
+            return risk_analyzer.retornar_metricas_vazias()
+
+        # Garante que todos os dataframes e series usados estejam perfeitamente alinhados
+        # com o X_scaled, que é a base de dados final do modelo.
+        common_index = self.X_scaled.index.intersection(y.index).intersection(precos.index).intersection(t1.index)
+
+        X_aligned = self.X_scaled.loc[common_index]
+        y_aligned = y.loc[common_index]
+        precos_aligned = precos.loc[common_index]
+        t1_aligned = t1.loc[common_index]
+
+        y_encoded_aligned = pd.Series(self.label_encoder.transform(y_aligned), index=common_index)
+
+        # Recria o gerador de CV com o t1 perfeitamente alinhado ao X que será usado.
+        # Isso resolve o erro de desalinhamento de índice.
+        cv_gen = PurgedKFoldCV(n_splits=Params.N_SPLITS_CV, t1=t1_aligned, purge_days=Params.PURGE_DAYS)
+
+        todos_os_retornos = []
+
+        for train_idx, test_idx in cv_gen.split(X_aligned):
+            if len(test_idx) == 0: continue
+
+            X_train, X_test = X_aligned.iloc[train_idx], X_aligned.iloc[test_idx]
+            y_train_enc = y_encoded_aligned.iloc[train_idx]
+            precos_test = precos_aligned.iloc[test_idx]
+
+            modelo_fold = lgb.LGBMClassifier(**self.modelo_final.get_params())
+            modelo_fold.fit(X_train, y_train_enc)
+
+            idx_classe_1 = np.where(self.label_encoder.classes_ == 1)[0][0]
+            probas_test = modelo_fold.predict_proba(X_test)[:, idx_classe_1]
+            sinais = (probas_test >= self.threshold_operacional).astype(int)
+
+            df_sinais_test = pd.DataFrame({'preco': precos_test.values, 'sinal': sinais}, index=precos_test.index)
+            backtest_fold = risk_analyzer.backtest_sinais(df_sinais_test, verbose=False)
+
+            if backtest_fold['trades'] > 0:
+                todos_os_retornos.extend(backtest_fold['retornos'])
+
+        if not todos_os_retornos:
+            return risk_analyzer.retornar_metricas_vazias()
+
+        retornos_np = np.array(todos_os_retornos)
+        capital_total = np.insert(np.cumprod(1 + retornos_np), 0, 1)
+        pico = np.maximum.accumulate(capital_total)
+        drawdown_series = (capital_total - pico) / pico
+
+        return {
+            'retorno_total': float(capital_total[-1] - 1),
+            'trades': len(retornos_np),
+            'sharpe': self.wfv_metrics.get('sharpe_medio', 0),
+            'max_drawdown': float(np.min(drawdown_series)),
+            'win_rate': np.sum(retornos_np > 0) / len(retornos_np),
+            'equity_curve': capital_total.tolist(),
+        }
 
     @staticmethod
     def validar_dados_treinamento(X: pd.DataFrame, y: pd.Series, min_amostras: int = 100) -> bool:

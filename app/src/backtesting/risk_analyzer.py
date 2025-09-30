@@ -21,7 +21,7 @@ class RiskAnalyzer:
         self.calculos = CalculosEstatisticos()
 
     @staticmethod
-    def _retornar_metricas_vazias() -> Dict[str, Any]:
+    def retornar_metricas_vazias() -> Dict[str, Any]:
         """Retorna um dicionário com métricas zeradas para casos sem operações."""
         return {
             'retorno_total': 0.0, 'trades': 0, 'sharpe': 0.0, 'sortino': 0.0,
@@ -42,7 +42,7 @@ class RiskAnalyzer:
         """
         if df_sinais.empty or 'sinal' not in df_sinais.columns or df_sinais['sinal'].sum() == 0:
             if verbose: logger.warning("Backtest não executado: sem sinais de operação.")
-            return self._retornar_metricas_vazias()
+            return self.retornar_metricas_vazias()
 
         if not isinstance(df_sinais.index, pd.DatetimeIndex):
             df_sinais = df_sinais.copy()
@@ -53,7 +53,7 @@ class RiskAnalyzer:
         df['posicao'] = df['sinal'].diff().fillna(0)
         trades = df[df['posicao'] != 0].copy()
 
-        if trades.empty or trades['posicao'].iloc[0] == -1: return self._retornar_metricas_vazias()
+        if trades.empty or trades['posicao'].iloc[0] == -1: return self.retornar_metricas_vazias()
         # Remove a primeira operação se for uma saída
         if trades['posicao'].iloc[-1] == 1: trades = trades.iloc[:-1]
         # Garante que a última operação seja uma saída para fechar a posição
@@ -64,7 +64,7 @@ class RiskAnalyzer:
         if len(entradas) > len(saidas): entradas = entradas.iloc[:len(saidas)]
         # Calcula os retornos por operação, descontando os custos
         retornos = (saidas.values / entradas.values) - 1 - (self.custo_por_trade * 2)
-        if len(retornos) == 0: return self._retornar_metricas_vazias()
+        if len(retornos) == 0: return self.retornar_metricas_vazias()
 
         lucros = retornos[retornos > 0]
         perdas = retornos[retornos < 0]

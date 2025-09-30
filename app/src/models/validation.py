@@ -49,7 +49,7 @@ class PurgedKFoldCV(KFold):
                              f"Necessário mínimo de {self.n_splits * 50} amostras.")
 
         if not X.index.equals(self.t1.index):
-            raise ValueError(...)
+            raise ValueError("O índice de X e o índice da série t1 devem ser idênticos para o PurgedKFoldCV funcionar.")
 
         indices = np.arange(X.shape[0])
         mbrg = self.purge_days
