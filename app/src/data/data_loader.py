@@ -1,5 +1,7 @@
 import os
 import re
+from urllib.parse import urlparse
+
 import psycopg2
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -16,19 +18,21 @@ class DataLoader:
     """Carrega e gerencia dados de mercado, com cache em PostgreSQL."""
 
     def __init__(self, db_config: dict = None):
-        self.db_config = db_config or {
-            "host": "127.0.0.1",
-            "dbname": "postgres",
-            "user": "postgres",
-            "password": "admin",
-            "port": "5432",
-        }
+        self.db_config = db_config
         self._criar_tabelas()
 
     @contextmanager
     def _conexao(self):
         """Context manager para gerenciar conexões com o PostgreSQL."""
-        conn = psycopg2.connect(**self.db_config)
+        url = urlparse("postgresql://admin:Le0t7F5gLxYIPS1gSsnuBum1oR42CYbb@dpg-d3e54s2li9vc739bs410-a.oregon-postgres.render.com/acoes")
+        conn = psycopg2.connect(
+            dbname=url.path[1:],
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port,
+            sslmode="require"
+        )
         try:
             yield conn
         finally:
