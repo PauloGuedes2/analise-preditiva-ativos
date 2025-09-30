@@ -93,54 +93,100 @@ class DashboardTrading:
 
         previsao = _modelo.prever_direcao(X_untruncated.tail(1), ticker)
 
+        data_base_analise = X_untruncated.index[-1] if not X_untruncated.empty else None
+        data_alvo_previsao = (data_base_analise + pd.tseries.offsets.BDay(1)) if data_base_analise else None
+
         return {
             "df_ticker": df_ticker, "df_ibov": df_ibov, "X_full": X_full,
             "y_full": y_full, "precos_full": precos_full, "previsao": previsao,
-            "t1": t1
+            "t1": t1,
+            "data_base_analise": data_base_analise,
+            "data_alvo_previsao": data_alvo_previsao,
+            "X_untruncated": X_untruncated
         }
 
-    def _gerar_validacao_recente(self, X_full: pd.DataFrame, y_full: pd.Series, precos_full: pd.Series) -> tuple[
-        list, dict]:
-        """Gera previsões para os últimos N dias e calcula métricas de performance."""
+    def _gerar_validacao_recente(self, dados: dict) -> tuple[list, dict]:
+        """
+        Gera a validação de performance para os últimos N dias, garantindo que
+        as datas sejam contínuas até o dia da análise.
+        """
         num_dias = Params.UI_VALIDATION_DAYS
-        if len(X_full) < num_dias or len(precos_full) <= num_dias:
+        X_untruncated = dados["X_untruncated"]
+        y_full = dados["y_full"]
+        precos_full = dados["precos_full"]
+
+        if len(X_untruncated) < num_dias:
             return [], {}
 
         resultados_validacao = []
         acertos_retornos = []
-        num_oportunidades, num_acertos = 0, 0
+        num_oportunidades, num_acertos, num_decisoes_corretas = 0, 0, 0
 
-        for dia in X_full.index[-num_dias:]:
-            dados_dia = X_full.loc[dia:dia]
-            previsao = self.modelo_carregado.prever_direcao(dados_dia, self.ticker_selecionado)
-            resultado_real = y_full.loc[dia]
-            acertou = (previsao['should_operate'] and resultado_real == 1)
+        dias_avaliados = 0
+        dias_para_validar = min(num_dias - 1, len(X_untruncated) - 1)
+
+        for dia in X_untruncated.index[-(dias_para_validar + 1):-1]:
+            dados_dia = X_untruncated.loc[dia:dia]
+            previsao_hist = self.modelo_carregado.prever_direcao(dados_dia, self.ticker_selecionado)
+
+            resultado_real_tb = y_full.get(dia, "N/A")
 
             try:
                 idx_atual = precos_full.index.get_loc(dia)
                 variacao_real = (precos_full.iloc[idx_atual + 1] / precos_full.iloc[
-                    idx_atual]) - 1 if idx_atual + 1 < len(precos_full) else np.nan
+                    idx_atual]) - 1 if idx_atual + 1 < len(
+                    precos_full) else np.nan
             except (KeyError, IndexError):
                 variacao_real = np.nan
 
-            if previsao['should_operate']:
-                num_oportunidades += 1
-                if acertou:
-                    num_acertos += 1
-                    if not np.isnan(variacao_real): acertos_retornos.append(variacao_real)
+            performance_str = "⚪️ Neutro"
+            sinal_foi_oportunidade = previsao_hist['should_operate']
+
+            if not np.isnan(variacao_real):
+                dias_avaliados += 1
+                if sinal_foi_oportunidade:
+                    num_oportunidades += 1
+                    if variacao_real > 0:
+                        performance_str = "✅ Acerto"
+                        num_acertos += 1
+                        num_decisoes_corretas += 1
+                        acertos_retornos.append(variacao_real)
+                    else:
+                        performance_str = "❌ Erro"
+                else:
+                    if variacao_real > 0:
+                        performance_str = "⚪️ Alta não Sinalizada"
+                    else:
+                        performance_str = "✅ Evitou Perda"
+                        num_decisoes_corretas += 1
 
             resultados_validacao.append({
                 "Data": dia.strftime('%d/%m/%Y'),
-                "Sinal do Modelo": "🟢 OPORTUNIDADE" if previsao['should_operate'] else "🟡 OBSERVAR",
-                "Confiança do Modelo": previsao['probabilidade'],
-                "Resultado Real (Tripla Barreira)": resultado_real,
+                "Sinal do Modelo": "🟢 OPORTUNIDADE" if sinal_foi_oportunidade else "🟡 OBSERVAR",
+                "Probabilidade de Alta": previsao_hist['probabilidade'],
+                "Resultado Real (Tripla Barreira)": resultado_real_tb,
                 "Variação Diária Real": variacao_real,
-                "Performance": "✅ ACERTOU" if acertou else ("❌ ERROU" if previsao['should_operate'] else "⚪️ Neutro")
+                "Performance": performance_str
             })
+
+        previsao_atual = dados['previsao']
+        data_alvo = dados.get("data_alvo_previsao")
+        data_alvo_formatada = data_alvo.strftime('%d/%m/%Y') if data_alvo else "Data Indisponível"
+
+        resultados_validacao.append({
+            "Data": data_alvo_formatada,
+            "Sinal do Modelo": "🟢 OPORTUNIDADE" if previsao_atual['should_operate'] else "🟡 OBSERVAR",
+            "Probabilidade de Alta": previsao_atual['probabilidade'],
+            "Resultado Real (Tripla Barreira)": "⏳ Aguardando",
+            "Variação Diária Real": np.nan,
+            "Performance": "⏳ Em Acompanhamento"
+        })
 
         metricas = {
             'taxa_acerto': (num_acertos / num_oportunidades) if num_oportunidades > 0 else 0,
-            'retorno_medio_acertos': np.mean(acertos_retornos) if acertos_retornos else 0
+            'retorno_medio_acertos': np.mean(acertos_retornos) if acertos_retornos else 0,
+            'assertividade_geral': (num_decisoes_corretas / dias_avaliados) if dias_avaliados > 0 else 0,
+            'num_oportunidades_recente': num_oportunidades
         }
         return resultados_validacao, metricas
 
@@ -158,9 +204,7 @@ class DashboardTrading:
 
         dados = self._processar_dados_e_previsao(self.ticker_selecionado, self.modelo_carregado)
 
-        validacao_recente, metricas_validacao = self._gerar_validacao_recente(
-            dados["X_full"], dados["y_full"], dados["precos_full"]
-        )
+        validacao_recente, metricas_validacao = self._gerar_validacao_recente(dados)
 
         self.view.render_main_layout(
             ticker=self.ticker_selecionado,

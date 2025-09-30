@@ -66,4 +66,4 @@ class Params:
     ]
 
     UI_DRIFT_KEY_FEATURES: List[str] = ['rsi_14', 'vol_21d', 'sma_ratio_10_50', 'momentum_5d']
-    UI_VALIDATION_DAYS: int = 10
+    UI_VALIDATION_DAYS: int = 30  # Número de dias para validação recente na UI

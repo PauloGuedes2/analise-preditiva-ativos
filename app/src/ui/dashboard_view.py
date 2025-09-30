@@ -52,7 +52,17 @@ class DashboardView:
     def render_main_layout(self, ticker, modelo, dados, validacao_recente, metricas_validacao):
         """Renderiza o layout principal, incluindo o painel de veredito e as abas de análise profunda."""
 
+        data_base = dados.get("data_base_analise")
+        data_alvo = dados.get("data_alvo_previsao")
+
+        texto_data = ""
+        if data_base and data_alvo:
+            texto_data = (f"Análise baseada nos dados de **{data_base.strftime('%d/%m/%Y')}**. "
+                          f"Previsão para o próximo dia útil: **{data_alvo.strftime('%d/%m/%Y')}**.")
+
         self.st.header(f"Análise Preditiva para {ticker}")
+        if texto_data:
+            self.st.markdown(texto_data)
 
         self._render_verdict_panel(modelo, dados)
 
@@ -86,9 +96,9 @@ class DashboardView:
             st.markdown(f"<h3 style='text-align: center;'>Veredito</h3>", unsafe_allow_html=True)
             st.markdown(f"<h2 style='text-align: center;'>{recomendacao}</h2>", unsafe_allow_html=True)
 
-        cols[1].metric("Confiança no Sinal", f"{previsao['probabilidade']:.1%}",
+        cols[1].metric("Probabilidade de Alta", f"{previsao['probabilidade']:.1%}",
                        help="Probabilidade estimada pelo modelo para a ocorrência de um evento de alta.")
-        cols[2].metric("Score de Confiança", f"{score}/{max_score}",
+        cols[2].metric("Score de Robustez", f"{score}/{max_score}",
                        help="Pontuação de 0 a 9 que resume a robustez histórica do modelo para este ativo, com base na validação Walk-Forward.")
         cols[3].metric("Sharpe Médio (WFV)", f"{wfv_metrics.get('sharpe_medio', 0):.2f}",
                        help="Mede o retorno ajustado ao risco na validação mais robusta (Walk-Forward). Acima de 0.5 é bom.")
@@ -132,7 +142,8 @@ class DashboardView:
             cols[0].metric("Retorno Total (WFV)", f"{wfv_performance['retorno_total']:.2%}")
             cols[1].metric("Nº de Trades (WFV)", f"{wfv_performance['trades']}")
             cols[2].metric("Taxa de Acerto (WFV)", f"{wfv_performance['win_rate']:.1%}")
-            cols[3].metric("Max Drawdown (WFV)", f"{wfv_performance['max_drawdown']:.2%}")
+            cols[3].metric("Max Drawdown (WFV)", f"{wfv_performance['max_drawdown']:.2%}",
+                           help="A maior queda percentual do capital a partir de um pico durante a simulação WFV. Mede o pior cenário de perda histórica.")
 
             col_chart1, col_chart2 = self.st.columns(2)
             with col_chart1:
@@ -144,9 +155,9 @@ class DashboardView:
 
         self.st.divider()
 
-        self.st.subheader("Simulação Completa (In-Sample)")
+        self.st.subheader("Simulação Otimista (Todos os Dados)")
         self.st.warning(
-            "Esta simulação utiliza **todos os dados históricos** (incluindo dados de treino) e tende a ser uma visão **otimista**. Serve principalmente para ilustrar o comportamento da estratégia.")
+            "Esta simulação utiliza **todos os dados disponíveis (incluindo os de treino)** e tende a ser uma visão **otimista** da performance. Serve principalmente para ilustrar o comportamento geral da estratégia.")
         self._render_secao_simulacao_completa(ticker, modelo, dados)
 
         self.st.divider()
@@ -172,7 +183,7 @@ class DashboardView:
             self.st.markdown("**Variáveis Mais Influentes**")
             self._plot_importancia_features(modelo)
         with col2:
-            self.st.markdown("**Performance de Classificação**")
+            self.st.markdown("**Previsão vs. Realidade (Classificação)**")
             self._plot_matriz_confusao(dados['y_full'], modelo)
 
         self._render_traducao_features()
@@ -197,25 +208,43 @@ class DashboardView:
             self.st.warning("Não há dados suficientes para gerar a validação recente.")
             return
 
-        col1, col2 = self.st.columns(2)
-        col1.metric("Taxa de Acerto (Sinais de Oportunidade)", f"{metricas.get('taxa_acerto', 0):.1%}",
-                    help="Dos sinais de 'OPORTUNIDADE' gerados, qual porcentagem correspondeu a um resultado real de 'ALTA' (Tripla Barreira).")
-        col2.metric("Retorno Médio Diário (nos Acertos)", f"{metricas.get('retorno_medio_acertos', 0):.2%}",
-                    help="A variação média do preço no dia seguinte para os sinais de 'OPORTUNIDADE' que o modelo acertou.")
+        num_oportunidades = metricas.get('num_oportunidades_recente', 0)
+
+        if num_oportunidades > 0:
+            col1, col2, col3 = self.st.columns(3)
+            col1.metric("Taxa de Acerto (Oportunidades)", f"{metricas.get('taxa_acerto', 0):.1%}",
+                        help="Dos sinais de 'OPORTUNIDADE' gerados, qual % foi seguido por uma variação diária positiva.")
+            col2.metric("Assertividade Geral", f"{metricas.get('assertividade_geral', 0):.1%}",
+                        help="Percentual de dias em que o modelo tomou a decisão correta (acertando altas ou evitando perdas).")
+            col3.metric("Retorno Médio Diário (nos Acertos)", f"{metricas.get('retorno_medio_acertos', 0):.2%}",
+                        help="A variação média do preço no dia seguinte para os sinais de 'OPORTUNIDADE' que o modelo acertou.")
+        else:
+            col1, col2 = self.st.columns([1, 3])
+            with col1:
+                self.st.metric("Assertividade Geral", f"{metricas.get('assertividade_geral', 0):.1%}",
+                               help="Percentual de dias em que o modelo tomou a decisão correta (neste caso, o quão bem ele evitou perdas).")
+            with col2:
+                self.st.info(
+                    "O modelo não identificou sinais de 'Oportunidade' no período recente. A 'Assertividade Geral' reflete o quão bem ele evitou perdas nos dias em que recomendou observar.",
+                    icon="ℹ️")
 
         df_validacao = pd.DataFrame(resultados_validacao)
 
         def formatar_resultado_real(label):
             if label == 1: return "📈 ALTA"
             if label == -1: return "📉 BAIXA"
-            return "↔️ NEUTRO"
+            if label == 0: return "↔️ NEUTRO"
+            if label == "⏳ Aguardando": return "⏳ Aguardando"
+            return "N/A"
 
         def estilo_performance(val):
             cor = ""
-            if "ACERTOU" in val:
+            if "Acerto" in val or "Evitou Perda" in val:
                 cor = "#28a745"
-            elif "ERROU" in val:
+            elif "Erro" in val:
                 cor = "#dc3545"
+            elif "Acompanhamento" in val:
+                cor = "#007bff"
             return f'color: {cor}; font-weight: bold;'
 
         def estilo_variacao(val):
@@ -228,14 +257,14 @@ class DashboardView:
 
         self.st.dataframe(
             df_validacao.style
-            .format({"Confiança do Modelo": "{:.1%}", "Variação Diária Real": "{:+.2%}"})
+            .format({"Probabilidade de Alta": "{:.1%}", "Variação Diária Real": "{:+.2%}"})
             .map(estilo_performance, subset=['Performance'])
             .map(estilo_variacao, subset=['Variação Diária Real']),
             use_container_width=True, hide_index=True)
 
     def _render_explicacao_score_confianca(self):
         """Renderiza um expander explicando a metodologia do Score de Confiança."""
-        with self.st.expander("Como o Score de Confiança é calculado? 🤔"):
+        with self.st.expander("Como o Score de Robustez é calculado? 🤔"):
             self.st.markdown("""
             O score é uma nota de 0 a 9 que resume a robustez histórica do modelo para este ativo, com base em 3 pilares da validação Walk-Forward (WFV):
 
@@ -318,6 +347,11 @@ class DashboardView:
             plt.tight_layout()
             self.st.pyplot(fig)
             plt.close()
+            self.st.caption("""
+                        **Como ler este gráfico:** O valor `f(x)` final representa a "Probabilidade de Alta".
+                        As **barras azuis** são os fatores que empurraram a probabilidade para cima (contribuíram para um sinal de OPORTUNIDADE).
+                        As **barras vermelhas** empurraram a probabilidade para baixo.
+                        """)
 
     def _render_secao_saude_modelo(self, X_full, modelo):
         if not hasattr(modelo, 'training_data_profile') or modelo.training_data_profile is None:
@@ -513,9 +547,9 @@ class DashboardView:
             score += 2
         elif trades >= 2.5:
             score += 1
-        if score >= 7: return score, max_score, "Alta Confiança", "green"
-        if score >= 4: return score, max_score, "Média Confiança", "orange"
-        return score, max_score, "Baixa Confiança", "red"
+        if score >= 7: return score, max_score, "Alta Robustez", "green"
+        if score >= 4: return score, max_score, "Média Robustez", "orange"
+        return score, max_score, "Baixa Robustez", "red"
 
     def _exibir_metricas_backtest(self, metricas: Dict[str, Any]):
         self.st.subheader("Métricas de Performance da Simulação In-Sample")
@@ -527,9 +561,9 @@ class DashboardView:
         col_q1, col_q2, col_q3, col_q4 = self.st.columns(4)
         col_q1.metric("Taxa de Acerto", f"{metricas.get('win_rate', 0):.2%}")
         col_q2.metric("Profit Factor", f"{metricas.get('profit_factor', 0):.2f}",
-                      help="Soma dos lucros / Soma das perdas. > 1.5 é bom, > 2.0 é ótimo.")
+                      help="Quanto o sistema ganhou para cada R$ 1 que perdeu. Ex: um fator de 2.0 significa que os lucros totais foram o dobro das perdas totais. Acima de 1.5 é bom.")
         col_q3.metric("Payoff Ratio", f"{metricas.get('payoff_ratio', 0):.2f}",
-                      help="Ganho médio / Perda média. > 1.5 indica que os ganhos compensam as perdas.")
+                      help="Compara o tamanho da operação vencedora média com a perdedora média. Um payoff de 2.0 significa que, em média, um trade de ganho foi 2x maior que um trade de perda.")
         col_q4.metric("Max Drawdown", f"{metricas.get('max_drawdown', 0):.2%}",
                       help="A maior queda percentual do capital a partir de um pico.")
 
@@ -599,7 +633,8 @@ class DashboardView:
                                  name='Sharpe Ratio'))
         fig.add_vline(x=modelo.threshold_operacional, line_width=2, line_dash="dash", line_color="red",
                       annotation_text="Threshold Escolhido", annotation_position="top left")
-        fig.update_layout(title="Performance (Sharpe) vs. Threshold de Confiança", xaxis_title="Threshold de Confiança",
+        fig.update_layout(title="Performance (Sharpe) vs. Threshold de Decisão",
+                          xaxis_title="Threshold de Decisão (Probabilidade Mínima)",
                           yaxis_title="Sharpe Ratio Anualizado")
         self.st.plotly_chart(fig, use_container_width=True)
 
