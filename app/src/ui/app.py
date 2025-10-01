@@ -1,7 +1,8 @@
 import atexit
 import os
 import time
-from typing import Any
+from datetime import datetime
+from typing import Any, Tuple
 
 import numpy as np
 import pandas as pd
@@ -57,16 +58,31 @@ class DashboardTrading:
         return ticker
 
     @st.cache_resource(ttl=3600, show_spinner="Carregando modelo...")
-    def _carregar_modelo(_self, ticker: str) -> Any:
-        """Carrega o modelo treinado do disco."""
+    def _carregar_modelo(_self, ticker: str) -> Tuple[Any, Any]:
+        """
+        Carrega o modelo treinado do disco e sua data de treinamento.
+        Retorna uma tupla (modelo, data_treinamento).
+        """
         caminho = os.path.join(Params.PATH_MODELOS, f"modelo_{ticker}.joblib")
         if os.path.exists(caminho):
             try:
-                return load(caminho)
+                modelo = load(caminho)
+
+                # Lógica de fallback para data de treinamento
+                if hasattr(modelo, 'data_treinamento'):
+                    # Usa a data salva no modelo (para modelos novos)
+                    data = modelo.data_treinamento
+                else:
+                    # Usa a data de modificação do arquivo (para modelos antigos)
+                    timestamp = os.path.getmtime(caminho)
+                    data = datetime.fromtimestamp(timestamp)
+
+                return modelo, data
+
             except Exception as e:
                 st.error(f"Erro ao carregar o modelo '{ticker}': {e}")
-                return None
-        return None
+                return None, None
+        return None, None
 
     @st.cache_data(show_spinner="Processando dados do mercado...")
     def _processar_dados_e_previsao(_self, ticker: str, _modelo: Any) -> dict:
@@ -196,7 +212,7 @@ class DashboardTrading:
             self.view.render_tela_boas_vindas()
             return
 
-        self.modelo_carregado = self._carregar_modelo(self.ticker_selecionado)
+        self.modelo_carregado, data_treinamento = self._carregar_modelo(self.ticker_selecionado)
 
         if self.modelo_carregado is None:
             st.error(f"O modelo para {self.ticker_selecionado} não pôde ser carregado.")
@@ -211,7 +227,8 @@ class DashboardTrading:
             modelo=self.modelo_carregado,
             dados=dados,
             validacao_recente=validacao_recente,
-            metricas_validacao=metricas_validacao
+            metricas_validacao=metricas_validacao,
+            data_treinamento=data_treinamento
         )
 
     @staticmethod

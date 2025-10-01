@@ -47,9 +47,9 @@ class DashboardView:
             self.st.write(
                 "- **Performance Passada Não Garante Futuro:** O mercado é dinâmico e padrões podem não se repetir.\n"
                 "- **Não é uma Bola de Cristal:** Fatores macroeconômicos e notícias não estão no escopo do modelo.\n"
-                "- **Use como Ferramienta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
+                "- **Use como Ferramenta:** Esta análise deve ser usada como mais uma camada de informação em seu processo de decisão.")
 
-    def render_main_layout(self, ticker, modelo, dados, validacao_recente, metricas_validacao):
+    def render_main_layout(self, ticker, modelo, dados, validacao_recente, metricas_validacao, data_treinamento=None):
         """Renderiza o layout principal, incluindo o painel de veredito e as abas de análise profunda."""
 
         data_base = dados.get("data_base_analise")
@@ -63,6 +63,9 @@ class DashboardView:
         self.st.header(f"Análise Preditiva para {ticker}")
         if texto_data:
             self.st.markdown(texto_data)
+
+        if data_treinamento:
+            self.st.caption(f"🗓️ &nbsp; Modelo treinado em: {data_treinamento.strftime('%d/%m/%Y às %H:%M')}")
 
         self._render_verdict_panel(modelo, dados)
 
