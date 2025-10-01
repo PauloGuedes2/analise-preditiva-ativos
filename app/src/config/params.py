@@ -16,7 +16,7 @@ class Params:
 
     # Lista de tickers a serem treinados e avaliados
     TICKERS: List[str] = [
-       "VALE3.SA", "ITSA4.SA", "ELET3.SA"
+       "ITSA4.SA", "VALE3.SA", "TAEE11.SA"
     ]
 
     # --- Configurações de Feature Engineering e Labeling ---
@@ -26,8 +26,8 @@ class Params:
     ATR_FACTORS: Dict[str, Tuple[float, float]] = {
         "DEFAULT": (1.5, 1.0),  # (Fator Take Profit, Fator Stop Loss)
         "ITSA4.SA": (1.2, 0.8),
-        "ELET3.SA": (1.2, 0.8),
-        "VALE3.SA": (1.2, 0.8)
+        "VALE3.SA": (1.3, 0.8),
+        "TAEE11.SA": (1.5, 1.0),
     }
 
     # --- Configurações do Modelo ---
