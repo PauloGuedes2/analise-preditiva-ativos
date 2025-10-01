@@ -1,7 +1,15 @@
-yfinance
 pandas
 numpy
 scikit-learn
-python-dateutil
+joblib
+yfinance
 streamlit
 plotly
+lightgbm
+scipy
+optuna
+statsmodels
+shap
+matplotlib
+ipython
+postgres
