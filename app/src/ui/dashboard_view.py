@@ -474,12 +474,23 @@ class DashboardView:
 
     def _plot_matriz_confusao(self, y_full: pd.Series, modelo: Any):
         try:
-            common_index = modelo.X_scaled.index.intersection(y_full.index)
+            from src.models.validation import PurgedKFoldCV
+
+            if not hasattr(modelo, 'cv_gen') or not hasattr(modelo.cv_gen, 't1'):
+                self.st.warning("Não foi possível gerar a Matriz de Confusão: objeto 't1' não encontrado no modelo.")
+                return
+
+            common_index = modelo.X_scaled.index.intersection(y_full.index).intersection(modelo.cv_gen.t1.index)
 
             x_aligned = modelo.X_scaled.loc[common_index]
             y_aligned = y_full.loc[common_index]
+            t1_aligned = modelo.cv_gen.t1.loc[common_index]
 
-            _, test_idx = list(modelo.cv_gen.split(x_aligned))[-1]
+
+            cv_gen_temp = PurgedKFoldCV(n_splits=modelo.cv_gen.n_splits, t1=t1_aligned,
+                                        purge_days=modelo.cv_gen.purge_days)
+
+            _, test_idx = list(cv_gen_temp.split(x_aligned))[-1]
 
             y_encoded_aligned = modelo.label_encoder.transform(y_aligned)
             y_test_encoded = y_encoded_aligned[test_idx]
