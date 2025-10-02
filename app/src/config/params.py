@@ -1,3 +1,4 @@
+import os
 from typing import List, Dict, Tuple
 
 
@@ -47,8 +48,9 @@ class Params:
     DIAS_UTEIS_ANUAIS: int = 252  # Usado para anualizar métricas como Sharpe Ratio
 
     # --- Configurações de Paths ---
-    PATH_MODELOS: str = "src/modelos_treinados"  # Diretório para salvar modelos treinados
-    PATH_DB_MERCADO: str = "src/dados/dados_mercado.db"  # Arquivo do banco de dados de mercado (OHLCV)
+    SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    PATH_MODELOS: str = os.path.join(SRC_ROOT, "modelos_treinados")  # Diretório para salvar modelos treinados
+    PATH_DB_MERCADO: str = os.path.join(SRC_ROOT, "dados", "dados_mercado.db")  # Arquivo do banco de dados
 
     # --- Configurações de Logging ---
     LOG_LEVEL: str = "INFO"  # Nível de log (DEBUG, INFO, WARNING, ERROR)
