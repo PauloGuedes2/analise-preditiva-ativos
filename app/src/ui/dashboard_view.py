@@ -475,7 +475,10 @@ class DashboardView:
     def _plot_matriz_confusao(self, y_full: pd.Series, modelo: Any):
         try:
             _, test_idx = list(modelo.cv_gen.split(modelo.X_scaled))[-1]
-            y_test_labels = modelo.label_encoder.inverse_transform(modelo.label_encoder.transform(y_full)[test_idx])
+            y_aligned = y_full.loc[modelo.X_scaled.index]
+            y_encoded_aligned = modelo.label_encoder.transform(y_aligned)
+            y_test_encoded = y_encoded_aligned[test_idx]
+            y_test_labels = modelo.label_encoder.inverse_transform(y_test_encoded)
             preds_labels = modelo.label_encoder.inverse_transform(
                 modelo.modelo_final.predict(modelo.X_scaled.iloc[test_idx]))
             cm = confusion_matrix(y_test_labels, preds_labels, labels=[-1, 0, 1])
