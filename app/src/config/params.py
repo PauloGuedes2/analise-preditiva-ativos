@@ -47,8 +47,8 @@ class Params:
     DIAS_UTEIS_ANUAIS: int = 252  # Usado para anualizar métricas como Sharpe Ratio
 
     # --- Configurações de Paths ---
-    PATH_MODELOS: str = "modelos_treinados"  # Diretório para salvar modelos treinados
-    PATH_DB_MERCADO: str = "dados/dados_mercado.db"  # Arquivo do banco de dados de mercado (OHLCV)
+    PATH_MODELOS: str = "src/modelos_treinados"  # Diretório para salvar modelos treinados
+    PATH_DB_MERCADO: str = "src/dados/dados_mercado.db"  # Arquivo do banco de dados de mercado (OHLCV)
 
     # --- Configurações de Logging ---
     LOG_LEVEL: str = "INFO"  # Nível de log (DEBUG, INFO, WARNING, ERROR)
