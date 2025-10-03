@@ -8,7 +8,7 @@ class Run:
     def __init__(self):
         """Inicializa a classe, definindo os caminhos base do projeto."""
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.app_path = os.path.join(self.base_dir, "src", "ui", "app.py")
+        self.app_path = os.path.join(self.base_dir, "app.py")
 
     def _verificar_app(self) -> None:
         """Verifica se o arquivo app.py existe, encerrando se não encontrar."""
