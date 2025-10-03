@@ -157,17 +157,17 @@ class DashboardView:
             self.st.warning("Não há trades suficientes na validação WFV para gerar a curva de capital.")
 
         self.st.divider()
+        self.st.subheader("Análise Visual dos Sinais WFV")
+        self.st.caption(
+            "Este gráfico mostra exatamente onde os sinais de oportunidade teriam ocorrido em um cenário realista de teste.")
+        self._plot_wfv_signals_on_price(dados['precos_full'], wfv_performance)
+
+        self.st.divider()
 
         self.st.subheader("Simulação Otimista (Todos os Dados)")
         self.st.warning(
             "Esta simulação utiliza **todos os dados disponíveis (incluindo os de treino)** e tende a ser uma visão **otimista** da performance. Serve principalmente para ilustrar o comportamento geral da estratégia.")
         self._render_secao_simulacao_completa(ticker, modelo, dados)
-
-        self.st.divider()
-        self.st.subheader("Análise Visual dos Sinais WFV")
-        self.st.caption(
-            "Este gráfico mostra exatamente onde os sinais de oportunidade teriam ocorrido em um cenário realista de teste.")
-        self._plot_wfv_signals_on_price(dados['precos_full'], wfv_performance)
 
     def _render_tab_mercado(self, ticker, modelo, dados):
         """Renderiza a aba de Análise de Mercado."""
