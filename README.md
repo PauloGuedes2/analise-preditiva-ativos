@@ -31,52 +31,29 @@
 
 ## 📋 **Índice**
 
-### 🎯 **Início Rápido**
-- [🎭 A História Por Trás do Projeto](#-a-história-por-trás-do-projeto)
-- [📊 O Que Este Sistema Faz](#-o-que-este-sistema-faz)
-- [🚀 Instalação Rápida](#-instalação-rápida)
-- [🎮 Como Usar](#-como-usar)
+### 🎯 **Visão Geral**
+- [O Que Este Sistema Faz](#-o-que-este-sistema-faz)
+- [A História Por Trás do Projeto](#-a-história-por-trás-do-projeto)
 
-### 🧠 **Entendendo o Sistema**
-- [🧬 Como Funciona Por Dentro](#-como-funciona-por-dentro)
-- [📊 Entendendo os Resultados](#-entendendo-os-resultados)
-- [🔍 Casos de Uso Reais](#-casos-de-uso-reais)
-- [🎛️ Personalização e Configuração](#-personalização-e-configuração)
+### 🚀 **Guia de Uso Prático**
+- [Instalação Rápida](#-instalação-rápida)
+- [Como Usar](#-como-usar)
+- [Personalização e Configuração](#-personalização-e-configuração)
 
-### 🛠️ **Técnico e Avançado**
-- [🛠️ Arquitetura Técnica](#-arquitetura-técnica)
-- [⚠️ Limitações e Honestidade Total](#-limitações-e-honestidade-total)
-- [⚖️ Licença e Responsabilidade](#-licença-e-responsabilidade)
-- [🎉 Agradecimentos](#-agradecimentos)
+### 📊 **Análise e Aplicação**
+- [Entendendo os Resultados](#-entendendo-os-resultados)
+- [Casos de Uso Reais](#-casos-de-uso-reais)
 
+### 🧠 **Como o Sistema Funciona (Deep Dive)**
+- [Como Funciona Por Dentro](#-como-funciona-por-dentro)
+- [Arquitetura Técnica](#-arquitetura-técnica)
+- [Tecnologias Utilizadas](#-tecnologias-utilizadas)
 
----
+### 🛠️ **Informações de Referência**
+- [Limitações e Honestidade Total](#-limitações-e-honestidade-total)
+- [Licença e Responsabilidade](#-licença-e-responsabilidade)
+- [Agradecimentos](#-agradecimentos)
 
-## 🎭 **A História Por Trás do Projeto**
-
-> *"E se você tivesse um assistente que analisasse milhares de dados do mercado em segundos, nunca se cansasse, e ainda explicasse cada decisão de forma cristalina?"*
-
-Imagine que você está diante da tela, observando os gráficos de **VALE3**, **ITSA4** ou **TAEE11**. O mercado está volátil, as notícias se contradizem, e você precisa tomar uma decisão. **Comprar? Vender? Esperar?**
-
-Foi exatamente essa angústia que deu origem a este projeto. Não queríamos criar mais um "robô trader" que promete lucros mágicos. Queríamos algo diferente: **um parceiro inteligente e honesto**.
-
-### 🤔 **O Problema Real**
-
-Todo dia, milhões de pessoas enfrentam o mesmo dilema:
-- 📊 **Sobrecarga de informação**: Gráficos, indicadores, notícias... por onde começar?
-- 🎲 **Decisões emocionais**: O medo e a ganância nublam o julgamento
-- ⏰ **Falta de tempo**: Quem tem horas para analisar cada movimento?
-- 🔍 **Falta de método**: Como separar o sinal do ruído no mercado?
-
-### 💡 **Nossa Solução**
-
-Criamos um sistema que combina:
-- 🧠 **Inteligência Artificial** (LightGBM) para detectar padrões
-- 🔬 **Metodologia científica** para validar cada previsão  
-- 🎯 **Transparência total** - você vê exatamente como chegamos a cada conclusão
-- 📱 **Interface simples** que qualquer pessoa pode usar
-
-**Resultado?** Um assistente que analisa 18+ indicadores técnicos em segundos e te diz: *"Olha, baseado nos últimos 3 anos de dados, existe uma oportunidade interessante aqui. Deixe-me te mostrar o porquê..."*
 
 ---
 
@@ -109,78 +86,33 @@ Criamos um sistema que combina:
 
 ---
 
-## 🧬 **Como Funciona Por Dentro**
+## 🎭 **A História Por Trás do Projeto**
 
-### 🎯 **1. A "Tripla Barreira" - Nossa Metodologia Secreta**
+> *"E se você tivesse um assistente que analisasse milhares de dados do mercado em segundos, nunca se cansasse, e ainda explicasse cada decisão de forma cristalina?"*
 
-Imagine que você compra uma ação hoje. Definimos 3 cenários:
-- 📈 **Barreira de Lucro**: Se subir X%, vendemos com lucro
-- 📉 **Barreira de Perda**: Se cair Y%, vendemos no prejuízo  
-- ⏰ **Barreira de Tempo**: Se nada acontecer em 5 dias, saímos
+Imagine que você está diante da tela, observando os gráficos de **VALE3**, **ITSA4** ou **TAEE11**. O mercado está volátil, as notícias se contradizem, e você precisa tomar uma decisão. **Comprar? Vender? Esperar?**
 
-O **X** e **Y** não são fixos! Eles se adaptam à volatilidade de cada ação:
-- VALE3 (mais volátil): barreiras mais largas
-- ITSA4 (menos volátil): barreiras mais estreitas
+Foi exatamente essa angústia que deu origem a este projeto. Não queríamos criar mais um "robô trader" que promete lucros mágicos. Queríamos algo diferente: **um parceiro inteligente e honesto**.
 
-### 🔬 **2. Validação "Walk-Forward" - O Teste da Vida Real**
+### 🤔 **O Problema Real**
 
-Não testamos o modelo nos mesmos dados que ele aprendeu (isso seria "cola"!). 
+Todo dia, milhões de pessoas enfrentam o mesmo dilema:
+- 📊 **Sobrecarga de informação**: Gráficos, indicadores, notícias... por onde começar?
+- 🎲 **Decisões emocionais**: O medo e a ganância nublam o julgamento
+- ⏰ **Falta de tempo**: Quem tem horas para analisar cada movimento?
+- 🔍 **Falta de método**: Como separar o sinal do ruído no mercado?
 
-Exemplo:
-1. **2020-2021**: Modelo aprende
-2. **2022**: Testamos (modelo nunca viu esses dados)
-3. **2020-2022**: Modelo aprende novamente  
-4. **2023**: Testamos novamente
-5. E assim por diante...
+### 💡 **Nossa Solução**
 
-É como se fosse um **simulador de tempo real** - o modelo só vê o futuro quando chega lá!
+Criamos um sistema que combina:
+- 🧠 **Inteligência Artificial** (LightGBM) para detectar padrões
+- 🔬 **Metodologia científica** para validar cada previsão  
+- 🎯 **Transparência total** - você vê exatamente como chegamos a cada conclusão
+- 📱 **Interface simples** que qualquer pessoa pode usar
 
-### 🧠 **3. 18 "Sensores" Analisando o Mercado**
-
-O sistema monitora constantemente:
-
-**📊 Momentum (Força do Movimento)**
-- RSI: A ação está "cara" ou "barata"?
-- Estocástico: Está em zona de sobrecompra/sobrevenda?
-- Retornos: Como se comportou nos últimos dias?
-
-**📈 Tendência (Direção Geral)**  
-- Médias Móveis: Está acima ou abaixo da tendência?
-- MACD: A força está aumentando ou diminuindo?
-
-**🌊 Volatilidade (Nervosismo do Mercado)**
-- Bandas de Bollinger: Está nos extremos?
-- ATR: O mercado está calmo ou agitado?
-
-**📦 Volume (Interesse dos Investidores)**
-- Volume relativo: Há mais gente negociando que o normal?
-- OBV: O dinheiro está entrando ou saindo?
-
-**🏛️ Contexto (Como Está o Brasil)**
-- Correlação com IBOVESPA: Está seguindo ou indo contra o mercado?
-- IBOV vs Média: O país está otimista ou pessimista?
-
-### 🎛️ **4. O "Cérebro" LightGBM**
-
-Usamos um algoritmo chamado **LightGBM** - imagine um comitê de 1000 especialistas, cada um dando sua opinião:
-
-- **Especialista 1**: "RSI baixo + volume alto = compra!"
-- **Especialista 2**: "Mas a tendência está ruim..."  
-- **Especialista 3**: "Porém o IBOV está forte..."
-- **Decisão Final**: Média ponderada de todas as opiniões
-
-### 🎯 **5. Calibração do "Gatilho"**
-
-O modelo não diz apenas "sim" ou "não". Ele dá uma **probabilidade** (ex: 73.2%).
-
-Mas quando consideramos uma "oportunidade"? 50%? 60%? 70%?
-
-O sistema **testa automaticamente** diferentes valores e escolhe aquele que historicamente deu o melhor equilíbrio entre:
-- **Precisão**: Quando diz "oportunidade", acerta?
-- **Recall**: Consegue pegar a maioria das oportunidades reais?
+**Resultado?** Um assistente que analisa 18+ indicadores técnicos em segundos e te diz: *"Olha, baseado nos últimos 3 anos de dados, existe uma oportunidade interessante aqui. Deixe-me te mostrar o porquê..."*
 
 ---
-
 ## 🚀 **Instalação Rápida**
 
 ### 📋 **Pré-requisitos**
@@ -323,28 +255,75 @@ Este é nosso "selo de qualidade". Calculamos baseado em 3 pilares:
 
 ---
 
-## ⚠️ **Limitações e Honestidade Total**
+## 🧬 **Como Funciona Por Dentro**
 
-### ❌ **O que este sistema NÃO é:**
-- ❌ **Garantia de lucro**: Performance passada ≠ resultados futuros
-- ❌ **Bola de cristal**: Não prevemos crashes ou eventos inesperados
-- ❌ **Substituto para análise**: Sempre combine com fundamentalista
-- ❌ **Conselho financeiro**: Somos uma ferramenta, não consultores
+### 🎯 **1. A "Tripla Barreira" - Nossa Metodologia Secreta**
 
-### ✅ **O que este sistema É:**
-- ✅ **Ferramenta educacional**: Para aprender ML aplicado a finanças
-- ✅ **Sistema de apoio**: Uma camada extra de informação
-- ✅ **Plataforma de pesquisa**: Para testar estratégias
-- ✅ **Código transparente**: Auditável e modificável
+Imagine que você compra uma ação hoje. Definimos 3 cenários:
+- 📈 **Barreira de Lucro**: Se subir X%, vendemos com lucro
+- 📉 **Barreira de Perda**: Se cair Y%, vendemos no prejuízo  
+- ⏰ **Barreira de Tempo**: Se nada acontecer em 5 dias, saímos
 
-### 🛡️ **Uso Responsável**
+O **X** e **Y** não são fixos! Eles se adaptam à volatilidade de cada ação:
+- VALE3 (mais volátil): barreiras mais largas
+- ITSA4 (menos volátil): barreiras mais estreitas
 
-**Antes de qualquer decisão:**
-1. 📚 **Estude o ativo**: Fundamentos, setor, concorrência
-2. 📊 **Analise o contexto**: Cenário macro, notícias, eventos
-3. 💰 **Gerencie risco**: Nunca invista mais do que pode perder
-4. 🎯 **Diversifique**: Não concentre em um único ativo
-5. 👨‍💼 **Consulte profissionais**: CPA, CFP, analistas credenciados
+### 🔬 **2. Validação "Walk-Forward" - O Teste da Vida Real**
+
+Não testamos o modelo nos mesmos dados que ele aprendeu (isso seria "cola"!). 
+
+Exemplo:
+1. **2020-2021**: Modelo aprende
+2. **2022**: Testamos (modelo nunca viu esses dados)
+3. **2020-2022**: Modelo aprende novamente  
+4. **2023**: Testamos novamente
+5. E assim por diante...
+
+É como se fosse um **simulador de tempo real** - o modelo só vê o futuro quando chega lá!
+
+### 🧠 **3. 18 "Sensores" Analisando o Mercado**
+
+O sistema monitora constantemente:
+
+**📊 Momentum (Força do Movimento)**
+- RSI: A ação está "cara" ou "barata"?
+- Estocástico: Está em zona de sobrecompra/sobrevenda?
+- Retornos: Como se comportou nos últimos dias?
+
+**📈 Tendência (Direção Geral)**  
+- Médias Móveis: Está acima ou abaixo da tendência?
+- MACD: A força está aumentando ou diminuindo?
+
+**🌊 Volatilidade (Nervosismo do Mercado)**
+- Bandas de Bollinger: Está nos extremos?
+- ATR: O mercado está calmo ou agitado?
+
+**📦 Volume (Interesse dos Investidores)**
+- Volume relativo: Há mais gente negociando que o normal?
+- OBV: O dinheiro está entrando ou saindo?
+
+**🏛️ Contexto (Como Está o Brasil)**
+- Correlação com IBOVESPA: Está seguindo ou indo contra o mercado?
+- IBOV vs Média: O país está otimista ou pessimista?
+
+### 🎛️ **4. O "Cérebro" LightGBM**
+
+Usamos um algoritmo chamado **LightGBM** - imagine um comitê de 1000 especialistas, cada um dando sua opinião:
+
+- **Especialista 1**: "RSI baixo + volume alto = compra!"
+- **Especialista 2**: "Mas a tendência está ruim..."  
+- **Especialista 3**: "Porém o IBOV está forte..."
+- **Decisão Final**: Média ponderada de todas as opiniões
+
+### 🎯 **5. Calibração do "Gatilho"**
+
+O modelo não diz apenas "sim" ou "não". Ele dá uma **probabilidade** (ex: 73.2%).
+
+Mas quando consideramos uma "oportunidade"? 50%? 60%? 70%?
+
+O sistema **testa automaticamente** diferentes valores e escolhe aquele que historicamente deu o melhor equilíbrio entre:
+- **Precisão**: Quando diz "oportunidade", acerta?
+- **Recall**: Consegue pegar a maioria das oportunidades reais?
 
 ---
 
@@ -379,7 +358,7 @@ app/
 
 ---
 
-### 🧪 **Tecnologias Utilizadas**
+## 🧪 **Tecnologias Utilizadas**
 
 Cada tecnologia foi cuidadosamente escolhida para resolver desafios específicos do projeto:
 
@@ -457,6 +436,31 @@ Cada tecnologia foi cuidadosamente escolhida para resolver desafios específicos
 - **No projeto**: Salva/carrega modelos LightGBM com todos os metadados
 
 > 💡 **Filosofia de Escolha**: Priorizamos bibliotecas **maduras**, **bem documentadas** e **amplamente adotadas** pela comunidade científica, garantindo estabilidade e facilidade de manutenção.
+
+---
+
+## ⚠️ **Limitações e Honestidade Total**
+
+### ❌ **O que este sistema NÃO é:**
+- ❌ **Garantia de lucro**: Performance passada ≠ resultados futuros
+- ❌ **Bola de cristal**: Não prevemos crashes ou eventos inesperados
+- ❌ **Substituto para análise**: Sempre combine com fundamentalista
+- ❌ **Conselho financeiro**: Somos uma ferramenta, não consultores
+
+### ✅ **O que este sistema É:**
+- ✅ **Ferramenta educacional**: Para aprender ML aplicado a finanças
+- ✅ **Sistema de apoio**: Uma camada extra de informação
+- ✅ **Plataforma de pesquisa**: Para testar estratégias
+- ✅ **Código transparente**: Auditável e modificável
+
+### 🛡️ **Uso Responsável**
+
+**Antes de qualquer decisão:**
+1. 📚 **Estude o ativo**: Fundamentos, setor, concorrência
+2. 📊 **Analise o contexto**: Cenário macro, notícias, eventos
+3. 💰 **Gerencie risco**: Nunca invista mais do que pode perder
+4. 🎯 **Diversifique**: Não concentre em um único ativo
+5. 👨‍💼 **Consulte profissionais**: CPA, CFP, analistas credenciados
 
 ---
 
