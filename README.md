@@ -34,7 +34,6 @@
 ### 🎯 **Início Rápido**
 - [🎭 A História Por Trás do Projeto](#-a-história-por-trás-do-projeto)
 - [📊 O Que Este Sistema Faz](#-o-que-este-sistema-faz)
-- [🎪 Demonstração Visual](#-demonstração-visual)
 - [🚀 Instalação Rápida](#-instalação-rápida)
 - [🎮 Como Usar](#-como-usar)
 
@@ -110,33 +109,6 @@ Criamos um sistema que combina:
 
 ---
 
-## 🎪 **Demonstração Visual**
-
-### 🖥️ **Tela Principal - O Veredito**
-```
-┌─────────────────────────────────────────────────────────────┐
-│  📈 Análise para VALE3.SA                                   │
-│                                                             │
-│  🟢 OPORTUNIDADE          Probabilidade: 73.2%             │
-│  Score de Robustez: 7/9   Sharpe (WFV): 0.84              │
-│                                                             │
-│  💡 "Baseado nos padrões históricos, existe uma            │
-│      oportunidade interessante para amanhã"                │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 🔍 **Aba de Diagnóstico - Por Que Esta Decisão?**
-- **Gráfico SHAP**: Mostra que o RSI baixo (+0.12) e volume alto (+0.08) contribuíram para o sinal
-- **Saúde do Modelo**: ✅ Sem drift detectado - modelo confiável
-- **Validação Recente**: 8 de 12 oportunidades foram corretas (66.7%)
-
-### 📊 **Aba de Performance - Como Tem Se Saído?**
-- **Walk-Forward**: Retorno de +12.3% em 2 anos (vs +8.1% IBOV)
-- **Drawdown Máximo**: -8.2% (controlado)
-- **156 operações** com 58% de taxa de acerto
-
----
-
 ## 🧬 **Como Funciona Por Dentro**
 
 ### 🎯 **1. A "Tripla Barreira" - Nossa Metodologia Secreta**
@@ -154,7 +126,7 @@ O **X** e **Y** não são fixos! Eles se adaptam à volatilidade de cada ação:
 
 Não testamos o modelo nos mesmos dados que ele aprendeu (isso seria "cola"!). 
 
-Fazemos assim:
+Exemplo:
 1. **2020-2021**: Modelo aprende
 2. **2022**: Testamos (modelo nunca viu esses dados)
 3. **2020-2022**: Modelo aprende novamente  
