@@ -53,6 +53,8 @@
 - [Licença e Responsabilidade](#-licença-e-responsabilidade)
 - [Agradecimentos](#-agradecimentos)
 
+### 🎥 **Apresentação e Demonstração**
+- [Apresentação e Demonstração](#-apresentação-e-demonstração)
 
 ---
 
@@ -461,7 +463,18 @@ Cada tecnologia foi cuidadosamente escolhida para resolver desafios específicos
 4. 🎯 **Diversifique**: Não concentre em um único ativo
 5. 👨‍💼 **Consulte profissionais**: CPA, CFP, analistas credenciados
 
----
+--- 
+## Apresentação e Demonstração
+
+### 🌐 Aplicação Online
+Acesse a aplicação online hospedada no Streamlit Cloud: [Análise Preditiva de Ativos](https://tech3-modelo-ia-pos.streamlit.app/)
+
+
+### 🎥 Vídeo explicativo
+[![Watch the video](https://img.youtube.com/vi/8BumKItYDcQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=8BumKItYDcQ)
+
+___
+
 
 ## ⚖️ **Licença e Responsabilidade**
 
