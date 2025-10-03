@@ -23,7 +23,7 @@
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-🟢_Online-brightgreen?style=for-the-badge)
 ![Maintained](https://img.shields.io/badge/Maintained-✅_Active-blue?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-2.0-purple?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-1.0-purple?style=for-the-badge)
 
 </div>
 
