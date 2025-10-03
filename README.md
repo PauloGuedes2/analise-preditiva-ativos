@@ -37,7 +37,6 @@
 
 ### 🚀 **Guia de Uso Prático**
 - [Instalação Rápida](#-instalação-rápida)
-- [Como Usar](#-como-usar)
 - [Personalização e Configuração](#-personalização-e-configuração)
 
 ### 📊 **Análise e Aplicação**
